@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<VisualStudioUserFile ProjectCreator="Intel Fortran" Keyword="Console Application" Version="11.0" ProjectIdGuid="{90C3A6F4-4656-4A04-BAE7-726F52675C5F}">
-	<Configurations>
-		<Configuration Name="Debug|Win32" CommandArguments="&lt; fit01.inp &gt;fit01.out"/>
-		<Configuration Name="Release|Win32"/></Configurations></VisualStudioUserFile>
