@@ -1,0 +1,12 @@
+        !COMPILER-GENERATED INTERFACE MODULE: Thu Dec 30 19:02:33 2021
+        MODULE POTEN_FUNC__genmod
+          INTERFACE 
+            SUBROUTINE POTEN_FUNC(FORCE,F,R12,R32,THETA)
+              REAL(KIND=8), INTENT(IN) :: FORCE(99)
+              REAL(KIND=8), INTENT(OUT) :: F
+              REAL(KIND=8), INTENT(IN) :: R12
+              REAL(KIND=8), INTENT(IN) :: R32
+              REAL(KIND=8), INTENT(IN) :: THETA
+            END SUBROUTINE POTEN_FUNC
+          END INTERFACE 
+        END MODULE POTEN_FUNC__genmod

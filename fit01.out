@@ -1,0 +1,26 @@
+
+The fitting procedure starts...
+
+
+
+
+
+
+
+
+
+
+
+
+
+Number of obs. data points:        36
+Number of potential energy data points:      6106
+Number of data points used in the fit:      5362
+
+Iteration =        1
+
+calling Everest program for J = ****, ipar =  **...
+calling the vibrational evib.x program, kmax = ****
+calling the rovibronic erot.x program, kmax, jmax= ****
+calling the rovibronic erot.x program, kmax, jmax= ****
+collecting the rovibronic energies ...
