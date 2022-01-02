@@ -109,6 +109,7 @@ end type FTEverestT
     INTEGER(ik) :: index_F1 ! index of the F1 in F1_list
     real(rk)     :: Jrot       ! J - real
     integer(ik)  :: irot       ! index of the J value in J_list
+    integer(ik)  :: Ka         ! index of the J value in J_list
     integer(ik)  :: istate     ! e-state
     integer(ik)  :: imulti     ! imulti = 1,..,multiplicity
     real(rk)     :: F          ! spin-projection = -spin,-spin+1,..,spin-1,spin
@@ -151,7 +152,7 @@ end type FTEverestT
     type calcT
      !
      real(rk),pointer   :: energy(:)
-     type(quantaT) :: quanta
+     type(quantaT),pointer  :: quanta(:)
      !
   end type calcT
 
@@ -432,20 +433,20 @@ subroutine fitting_energies
         !
       case('OUTNAME','OUT_NAME')
         !
-        call readu(out_name)
+        call reada(out_name)
         !
       case('EVIB')
         !
-        call readu(evib_exe)
+        call reada(evib_exe)
         !
       case('EROT')
         !
-        call readu(erot_exe)
+        call reada(erot_exe)
         !
         !
       case('DERIV','XPECT')
         !
-        call readu(xpect_exe)
+        call reada(xpect_exe)
         !
       case("SPIN-ORBIT","POTEN","POTENTIAL") 
           !
@@ -552,7 +553,7 @@ subroutine fitting_energies
               !
               Nparam_check = 0
               !
-              call input_options(echo_lines=.false.)
+              call input_options(echo_lines=.true.,error_flag=1)
               !
               do while (trim(w)/="END")
                  !
@@ -776,7 +777,7 @@ subroutine fitting_energies
              !
              Nparam_check = 0
              !
-             call input_options(echo_lines=.false.)
+             call input_options(echo_lines=.true.,error_flag=1)
              !
              do while (trim(w)/="END")
                 !
@@ -907,7 +908,7 @@ subroutine fitting_energies
              !
              Nparam_check = 0
              !
-             call input_options(echo_lines=.false.)
+             call input_options(echo_lines=.true.,error_flag=1)
              !
              do while (trim(w)/="END")
                 !
@@ -1137,10 +1138,6 @@ subroutine fitting_energies
     stop 'wspace - out of memory'
    endif
    !
-   ! we will write the obs.-calc. data into the standard output file (unit=6) 
-   !
-   open(f_res,file=trim(out_name)//'.res',status='replace')
-   !
    ! prepare the file to write all computed energies 
    !
    open(f_en,file=trim(out_name)//'.en',status='replace')
@@ -1212,32 +1209,32 @@ subroutine fitting_energies
         !
         if (verbose>=3) write(f_out,"(/'calling Everest program')")
         !
-        write(kmax_ch,"(a3)") nint(kmax+0.5)
-        write(jmax_ch,"(a3)") nint(jmax+0.5)
+        write(kmax_ch,"(i3)") nint(kmax+0.5)
+        write(jmax_ch,"(i3)") nint(2.0_rk*jmax)
         !
         ! generate the vib-input and rot-input files using the tempates provided
         !
 #if (debug_ == 0)
            isys = systemqq('vib_inp.sh '//kmax_ch)
-            !
+           !
            isys = systemqq('rot_inp.sh '//kmax_ch//' '//jmax_ch)
 #endif
         !
         if (verbose>=3) write(f_out,"('calling the vibrational evib.x program, kmax = ',f8.1)") kmax
         !
 #if (debug_ == 0)
-          isys = systemqq(evib_exe//'< evib.inp >> evib.out')
+          isys = systemqq(evib_exe//'< evib.inp > evib.out')
 #endif
         !
         if (verbose>=3) write(f_out,"('calling the rovibronic erot.x program, kmax, jmax= ',2f8.1)") kmax,jmax
 #if (debug_ == 0)
-          isys = systemqq(erot_exe//'<erot.inp >>erot.out')
+          isys = systemqq(erot_exe//'<erot.inp >erot.out')
 #endif
         !
         if (verbose>=3) write(f_out,"('collecting the rovibronic energies ...')") 
         !
 #if (debug_ == 0)
-           isys = systemqq(./collect_energies_rot.sh erot.out > erot.log')
+           isys = systemqq('./collect_energies_rot.sh erot.out > erot.log')
 #endif
         !
         call get_vibronic_energies(Nmax,Nstates,calc)
@@ -1304,7 +1301,9 @@ subroutine fitting_energies
         ! Print out the calc. and obs.-calc., i.e. result of the fit. 
         ! Only fitted energies are printed. 
         !
-        write(f_out,"(/1X,100('-'),/'| ## |  N |  J | sym|     Obs.    |    Calc.   | Obs.-Calc. |   Weight |    v1 v2 v3  |',/1X,100('-'))")
+        write(f_out,"(/1x,100('-'))")
+        write(f_out,"('| ## |  N |      J  |par |    Obs.    |   Calc.    | Obs.-Calc. |   Weight |    v1 v2 v3 St    Ome  |')")
+        write(f_out,"(1x,100('-'))")
         !
         eps = 0
         !
@@ -1329,10 +1328,18 @@ subroutine fitting_energies
           !
           eps(nrow) = fitting%obs(nrow)%energy-enercalc(nrow)
           !
-          write (f_out,"(5i5,' ',3f13.4,2x,e9.2,5x,3(i3))") &
-             nrow,iener,Nrot,ipar_,iref,enercalc(nrow)+eps(nrow),enercalc(nrow),-eps(nrow),&
-             wtall(nrow),fitting%obs(nrow)%quanta%v1,fitting%obs(nrow)%quanta%v2,fitting%obs(nrow)%quanta%v3
-          !
+          write (f_out,"(2i5,f8.1,i5,2x,3f13.4,2x,e9.2,4x,4(i3),f8.1,2x,3(i3))") &
+             nrow,iener,Jrot,iparity,enercalc(nrow)+eps(nrow),enercalc(nrow),-eps(nrow),&
+             wtall(nrow),&
+             calc(iref,Nrot,ipar_)%quanta(iener)%v1,&
+             calc(iref,Nrot,ipar_)%quanta(iener)%v2,&
+             calc(iref,Nrot,ipar_)%quanta(iener)%v3,&
+             calc(iref,Nrot,ipar_)%quanta(iener)%istate,&
+             calc(iref,Nrot,ipar_)%quanta(iener)%omega,&
+             fitting%obs(nrow)%quanta%v1,&
+             fitting%obs(nrow)%quanta%v2,&
+             fitting%obs(nrow)%quanta%v3
+             !
         enddo ! --- nrow
         !
         ! Printing all calculated term values. If the obs. counterpats exist, 
@@ -1342,7 +1349,9 @@ subroutine fitting_energies
         !
         write(f_en,"(/'Iteration = ',i4)") fititer
         !
-        write(f_en,"(/1X,100('-'),/'| ## |  N |  J | Sym|     Obs.    |    Calc.   | Obs.-Calc. |   Weight |    v1 v2 v3  |',/1X,100('-'))")
+        write(f_en,"(/1x,100('-'))")
+        write(f_en,"('| ## |  N |      J  |par |    Obs.    |   Calc.    | Obs.-Calc. |   Weight |    v1 v2 v3 St    Ome  |')")
+        write(f_en,"(1x,100('-'))")
         !
         do iref = 1,2
            !
@@ -1381,19 +1390,32 @@ subroutine fitting_energies
                      !
                      if (abs(eps(nrow))>1.0) mark = "!"
                      !
-                     write(f_en,"(2i5,f8.1,2i5,' ',3f13.4,2x,e9.2,2x,a1,2x,3(i3))") &
+                     write(f_en,"(2i5,f8.1,i5,' ',3f13.4,2x,e9.2,2x,a1,2x,4(i3),f8.1,2x,3(i3))") &
                                      irow,fitting%obs(nrow)%n,Jrot,fitting%obs(nrow)%iparity,&
-                                     fitting%obs(nrow)%iparity,&
+                                     !fitting%obs(nrow)%iref,&
                                      enercalc(nrow)+eps(nrow),enercalc(nrow),-eps(nrow),&
                                      wtall(nrow),mark,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%v1,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%v2,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%v3,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%istate,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%omega,&
                                      fitting%obs(nrow)%quanta%v1,&
                                      fitting%obs(nrow)%quanta%v2,&
                                      fitting%obs(nrow)%quanta%v3
+
                      !
                   else
                      !
-                     write(f_en,"(2i5,f8.1,2i5,' ',3f13.4,2x,e9.2,5x,3(i3))") irow,0,Jrot,ipar_,iref,0.0,&
-                                     calc(iref,Nrot,ipar_)%energy(irow)-ezero_,0.0,0.0
+                     write(f_en,"(2i5,f8.1,i5,' ',3f13.4,2x,e9.2,5x,4(i3),f8.1)") irow,0,Jrot,ipar_,0.0_rk,&
+                                     calc(iref,Nrot,ipar_)%energy(irow)-ezero_,0.0_rk,0.0_rk,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%v1,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%v2,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%v3,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%istate,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%omega
+
+                                     
                      !
                   endif
                   !
@@ -1681,38 +1703,6 @@ subroutine fitting_energies
         !
         still_run = .false.
         !
-        rewind(f_res)
-        !
-        write(f_res,"(/1X,100('-'),/'| ## |  N |  J | tau|     Obs.    |    Calc.   | Obs.-Calc. |   Weight |    v1 v2 v3  |',/1X,100('-'))")
-        !
-        do nrow = 1,fitting%Nenergies
-        
-          !
-          Jrot = fitting%obs(nrow)%Jrot
-          iparity = fitting%obs(nrow)%iparity
-          iref = fitting%obs(nrow)%iref
-          nrot = int(jrot)
-          !
-          ipar_ = 1 ; if (iparity==-1) ipar_ = 2
-          !
-          if (Jrot>jmax) cycle
-          !
-          iener = fitting%obs(nrow)%N
-          !
-          if (iener>Nstates(iref,Nrot,ipar_)) then 
-             enercalc(nrow) = 0
-          else
-             enercalc(nrow) = calc(iref,Nrot,ipar_)%energy(iener)-ezero_
-          endif
-          !
-          eps(nrow) = fitting%obs(nrow)%energy-enercalc(nrow)
-          !
-          write (f_res,"(2i5,f8.1,2i5,' ',3f13.4,2x,e9.2,5x,3(i3))") &
-             nrow,iener,Nrot,ipar_,iref,enercalc(nrow)+eps(nrow),enercalc(nrow),-eps(nrow),&
-          wtall(nrow),fitting%obs(nrow)%quanta%v1,fitting%obs(nrow)%quanta%v2,fitting%obs(nrow)%quanta%v3
-          !      
-        enddo
-        !
         ! Print out the ssq for the rovib. energies and pot. data points separetely:
         !
         ssq1 = 0 ; ssq2 = 0 
@@ -1730,68 +1720,10 @@ subroutine fitting_energies
 
         !
         write (f_out,6552) fititer,nused,numpar,stadev,ssq1,ssq2,stability
-        write (f_res,6553) fititer,nused,numpar,stadev,rms1,rms2,stability
-        !
         !
       enddo  ! --- fititer
       !
    enddo outer_loop
-   !
-   ! Print out the final information: paramteres and eneries.
-   !
-   rewind(f_res)
-   !
-   write (f_res,"(/36('-')/' Parameter | W |      Value        |',/36('-')/)")
-   !
-   do i=1,total_parameters
-      write (f_res,"(A8,1X,I4,2X,e18.8)") nampar(i),ivar(i),potparam(i)
-   enddo
-   !
-   write(f_res,"(/1X,100('-'),/'| ## |  N |  J | tau|     Obs.    |    Calc.   | Obs.-Calc. |   Weight |    v1 v2 v3  |',/1X,100('-'))")
-   !
-   do nrow = 1,fitting%Nenergies
-      !
-      Jrot = fitting%obs(nrow)%Jrot
-      iparity = fitting%obs(nrow)%iparity
-      iref = fitting%obs(nrow)%iref
-      nrot = int(jrot)
-      !
-      ipar_ = 1 ; if (iparity==-1) ipar_ = 2
-      !
-      if (Jrot>jmax) cycle
-      !
-      iener = fitting%obs(nrow)%N
-      !
-      if (iener>Nstates(iref,Nrot,ipar_)) then 
-         enercalc(nrow) = 0
-      else
-         enercalc(nrow) = calc(iref,Nrot,ipar_)%energy(iener)-ezero_
-      endif
-      !
-      eps(nrow) = fitting%obs(nrow)%energy-enercalc(nrow)
-      !
-      write (f_res,"(2i5,f8.1,2i5,' ',3f13.4,2x,e9.2,5x,3(i3))") &
-         nrow,iener,Nrot,ipar_,iref,enercalc(nrow)+eps(nrow),enercalc(nrow),-eps(nrow),&
-      wtall(nrow),fitting%obs(nrow)%quanta%v1,fitting%obs(nrow)%quanta%v2,fitting%obs(nrow)%quanta%v3
-      !
-   enddo
-   !
-   !
-   do nrow=1,pot_npts
-     !
-     r1 =fitting%r1(nrow)
-     r2 =fitting%r2(nrow)
-     theta=fitting%r3(nrow)*pi/180.0_rk
-     !
-     istate = fitting%iPES(nrow)
-     !
-     v = fitting%ai(nrow)-eps(nrow+fitting%Nenergies)
-
-     write (f_res,"(2f8.4,1x,f10.2,1x,i3,3f12.2,e10.2)") r1,r2,theta, &
-                  fitting%ai(nrow),istate,v, &
-                  eps(nrow+fitting%Nenergies),wtall(nrow+fitting%Nenergies) 
-     !
-   enddo
    !
    ssq1 = 0 ; ssq2 = 0 
    !
@@ -1802,10 +1734,6 @@ subroutine fitting_energies
    wtsum = sum(wt_bit(1+fitting%Nenergies:npts))
    !
    if (wtsum/=0) ssq2 = sqrt( sum(eps(1+fitting%Nenergies:npts)**2*dble(wt_bit(1+fitting%Nenergies:npts)))/wtsum )
-   !
-   write (f_res,6551) fititer,nused,numpar,stadev,ssq1,ssq2
-   write (f_res,6550) fititer,nused,numpar,stadev,rms,stability
-
   
 
 6550   format(/3X,67('-')/'   |  Iter  | Points | Params |   Deviat    |',&
@@ -2074,7 +2002,7 @@ subroutine fitting_energies
       write(f_p,"('alpha',4x,f19.10)") field%alpha
       !
       do i=1,field%Nterms
-         write(f_p,"(a8,1x,3i4,1x,f24.12)") adjustl(trim(field%forcename(i))),field%ipower1(i),field%ipower2(i),field%ipower3(i),&
+         write(f_p,"(a8,1x,3i4,1x,e24.12)") adjustl((field%forcename(i))),field%ipower1(i),field%ipower2(i),field%ipower3(i),&
                                           field%value(i)
       end do
       !
@@ -2208,10 +2136,9 @@ subroutine fitting_energies
       integer(ik),intent(inout)  :: Nstates(2,0:Nmax,2)
       type(calcT),intent(inout) :: calc(2,0:Nmax,2)
       !
-      integer(ik)              :: tunit,tau,KcPot,Kma,ISR,J2,ipar,Nrot,Ntot,Nsize,nn
-      integer(ik)    :: alloc,i,irot,iref
+      integer(ik)              :: tunit,tau,Kc,Pot,Kma,ISR,J2,ipar,Nrot,Ntot,Nsize,nn
+      integer(ik)    :: alloc,i,irot,iref,v1,v2,v3,ka
       real(rk)  :: Energy,De,wei,Ome,Wome,Wma,Jrot
-      character(len=3)   :: Ka
       character(len=5)   :: Jch
       integer(ik)  :: Nstates_(2,0:Nmax,2)
       !
@@ -2231,7 +2158,7 @@ subroutine fitting_energies
       if (Ntot==0) then 
          !
          do 
-           read(tunit,"(a5,2x,i2,1x,i5,2(1x,f12.4),1x,i3)",end=119) Jch,tau,nn,Energy,De,iref ! ,V,Ka,Kc,v1,v2,v3,Wei,Ome,Wome,Pot,Kma,Wma,ISR,  N
+           read(tunit,"(a5,2x,i2,1x,i5,2(1x,f12.4),1x,i3)",end=119) Jch,tau,nn,Energy,De,iref !Ka,Kc,v1,v2,v3,Wei,Ome,Wome,Pot,Kma,Wma,ISR,  N
            !
            do i=1,len_trim(Jch)
                if (Jch(i:i) == "/") Jch(i:i) = " "
@@ -2271,7 +2198,7 @@ subroutine fitting_energies
                !
                Nsize = max(1,Nstates(iref,irot,ipar))
                !
-               allocate(calc(iref,irot,ipar)%energy(Nsize),stat=alloc)
+               allocate(calc(iref,irot,ipar)%energy(Nsize),calc(iref,irot,ipar)%quanta(Nsize),stat=alloc)
                if (alloc/=0) then
                  write (out,"(' Error ',i0,' initializing  calc(irot,ipar)%energy(Nsize)')") alloc
                  stop 'obs. calc(irot,ipar)%energy(Nsize) arrays - alloc'
@@ -2288,7 +2215,8 @@ subroutine fitting_energies
       Nstates_ = 0
       !
       do 
-        read(tunit,"(a5,2x,i2,1x,i5,2(1x,f12.4),1x,i3)",end=121) Jch,tau,nn,Energy,De,iref !,V,Ka,Kc,v1,v2,v3,Wei,Ome,Wome,Pot,Kma,Wma,ISR,  N
+        read(tunit,"(a5,2x,i2,1x,i5,2(1x,f12.4),1x,i3,1x,2(1x,i3),3(1x,i2),1x,f5.3,1x,f3.1,1x,f5.3,1x,i2)",end=121) &
+             Jch,tau,nn,Energy,De,iref,Ka,Kc,v1,v2,v3,Wei,Ome,Wome,Pot !,Kma,Wma,ISR,  N
         !
         do i=1,len_trim(Jch)
             if (Jch(i:i) == "/") Jch(i:i) = " "
@@ -2308,6 +2236,12 @@ subroutine fitting_energies
         nn = Nstates_(iref,Nrot,ipar)
         !
         calc(iref,Nrot,ipar)%energy(nn) = Energy
+        calc(iref,Nrot,ipar)%quanta(nn)%v1 = v1
+        calc(iref,Nrot,ipar)%quanta(nn)%v2 = v2
+        calc(iref,Nrot,ipar)%quanta(nn)%v3 = v3
+        calc(iref,Nrot,ipar)%quanta(nn)%istate = Pot
+        calc(iref,Nrot,ipar)%quanta(nn)%Omega = Ome
+        calc(iref,Nrot,ipar)%quanta(nn)%Ka = Ka
         !
         cycle
         !         
