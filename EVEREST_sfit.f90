@@ -5,6 +5,7 @@ module fit_module
 use input
 use timer
 use accuracy
+use caoh_param
 !
 implicit none
 !
@@ -43,6 +44,8 @@ character(len=200)::  char_job(10)           ! The derectives from the input fil
 character(len=200)::  char_vib_job(100)      ! The vib. derectives from the input file are stored in this array. Will be used to create all job-input files.
 character(len=200)::  char_rot_job(100,2)      ! The rot. derectives from the input file are stored in this array. Will be used to create all job-input files.
 character(len=1)  :: mark
+!
+integer(ik) :: Nfields = 4
 !
 integer,parameter :: sym2parity(4) = (/0,1,0,1/) ! parity versus symmetry
 !
@@ -103,9 +106,6 @@ end type FTEverestT
   end type fieldT
   !
   type quantaT
-    real(rk) :: I1 ! nuclear spin 1
-    real(rk) :: F1  ! \hat{F1} = \hat{I1} + \hat{J}
-    INTEGER(ik) :: index_F1 ! index of the F1 in F1_list
     real(rk)     :: Jrot       ! J - real
     integer(ik)  :: irot       ! index of the J value in J_list
     integer(ik)  :: Ka         ! index of the J value in J_list
@@ -224,12 +224,12 @@ subroutine fitting_energies
   !
   logical :: eof
   !
-  integer(ik) :: i,nJ,ipot,iso,iref,istate,jref,Nparam,Nparam_check,iparam
+  integer(ik) :: i,nJ,ipot,iso,iref,istate,jref,Nparam,Nparam_check,iparam,ifield,ifield_,iaddr
   !
   type(fieldT),pointer      :: field
   !
   integer(ik)       :: iut !  iut is a unit number. 
-  integer(ik)  :: iobs,itau,iai,ic,iparams,irange,iparity
+  integer(ik)  :: iobs,itau,iai,ic,iparams,irange,iparity,ipar,irot,Nsize
   logical :: matchfound
   character(len=wl) :: large_fmt
   character(len=cl) :: ioname
@@ -254,6 +254,7 @@ subroutine fitting_energies
   character(len=8),allocatable :: nampar(:)   ! parameter names 
   
   integer,allocatable :: ivar(:)              ! switch for the parameters fit: ivar(i) = 0 for the parameters that do not vary.
+integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
   !
   !integer,allocatable :: J_obs(:),sym_obs(:) ! Arrays where we 
   !                                           ! store the information about obs. energies: 
@@ -274,9 +275,9 @@ subroutine fitting_energies
   !
   real(rk) :: wtsum,fit_factor,r1,r2,theta,ssq,rms,sum_sterr,conf_int
   real(rk) :: stadev_old,stability,stadev,tempx,deltax,v,potright,potleft
-  real(rk) :: ssq1,ssq2,rms1,rms2,info_
+  real(rk) :: ssq1,ssq2,rms1,rms2
   logical          :: still_run
-  integer          :: j,l
+  integer          :: j,l,info_
   integer          :: iener,irow,icolumn,ipar_
   !
   !     For the details on the robust fit see J.K.G. Watson, JMS, 219, 326 (2003).
@@ -328,10 +329,10 @@ subroutine fitting_energies
    ! Read the input file, count all energies, parameters, data points, so that we can 
    ! allocate all needed arrays and only then actuly read the input again. 
    !
-   allocate(poten(nestates),stat=alloc)
+   allocate(poten(Nfields),stat=alloc)
    call ArrayStart('poten',alloc,1,4)
-   allocate(spinorbit(ncouples),stat=alloc)
-   call ArrayStart('spinorbit',alloc,1,4)
+   !allocate(spinorbit(ncouples),stat=alloc)
+   !call ArrayStart('spinorbit',alloc,1,4)
    !
    ! input.f90
    !
@@ -451,6 +452,40 @@ subroutine fitting_energies
       case('DERIV','XPECT')
         !
         call reada(xpect_exe)
+        !
+      case ("MEM","MEMORY")
+        !
+        call readf(memory_limit)
+        !
+        call readu(w)
+        !
+        select case(w)
+            !
+          case default 
+            !
+            call report("Unexpected argument in MEMORY",.true.)
+            !
+          case("TB","T")
+            !
+            memory_limit = memory_limit*1024_rk
+            !
+          case("GB","G")
+            !
+            memory_limit = memory_limit
+            !
+          case("MB","M")
+            !
+            memory_limit = memory_limit/1024_rk
+            !
+          case("KB","K")
+            !
+            memory_limit = memory_limit/1024_rk**2
+            !
+          case("B")
+            !
+            memory_limit = memory_limit/1024_rk**3
+            !
+        end select
         !
       case("SPIN-ORBIT","POTEN","POTENTIAL") 
           !
@@ -1111,6 +1146,8 @@ subroutine fitting_energies
    call ArrayStart('ivar',alloc,size(ivar),kind(ivar))
    allocate (nampar(total_parameters),stat=alloc)
    call ArrayStart('nampar',alloc,size(nampar),kind(nampar))
+   allocate (ifitparam(total_parameters),stat=alloc)
+   call ArrayStart('ifitparam',alloc,size(ifitparam),kind(ifitparam))
    !
    allocate (ener_obs(fitting%Nenergies),enercalc(fitting%Nenergies),stat=alloc)
    call ArrayStart('ener_obs',alloc,size(ener_obs),kind(ener_obs))
@@ -1164,13 +1201,15 @@ subroutine fitting_energies
       stability = 1e10
       stadev    = 1e10
       !
-      numpar  = 0
-      !
       ! Count the actually varying number of parameters:
       !
       numpar  = 0
+      ifitparam = 1
       do i=1,total_parameters
-        if (ivar(i) .gt. 0) numpar=numpar+1
+        if (ivar(i) > 0) then 
+          numpar=numpar+1
+          ifitparam(numpar) = i
+        endif
       enddo 
       !
       rjacob = 0 
@@ -1203,7 +1242,7 @@ subroutine fitting_energies
         call write_potential_input_parameters(poten(1),'field1.fit')
         call write_potential_input_parameters(poten(2),'field2.fit')
         call write_potential_input_parameters(poten(3),'field3.fit')
-        call write_potential_input_parameters(spinorbit(1),'field4.fit')
+        call write_potential_input_parameters(poten(4),'field4.fit')
         !
         if (verbose>=3) write(f_out,"(/'calling Everest program')")
         !
@@ -1235,7 +1274,28 @@ subroutine fitting_energies
            isys = systemqq('./collect_energies_rot.sh erot.out > erot.log')
 #endif
         !
+        ! initial counting of states
+        !
         call get_vibronic_energies(Nmax,Nstates,calc)
+        !
+        ! allocate energy arrays before reading the states
+        !
+        do iref  = 1,2
+          do irot = 0,Nmax
+            do ipar = 1,2
+              !
+              Nsize = max(1,Nstates(iref,irot,ipar))
+              !
+              allocate(calc(iref,irot,ipar)%energy(Nsize),calc(iref,irot,ipar)%quanta(Nsize),stat=alloc)
+              call ArrayStart('calc%energy',alloc,size(calc(iref,irot,ipar)%energy),kind(calc(iref,irot,ipar)%energy))
+              call ArrayStart('calc%quanta',alloc,size(calc(iref,irot,ipar)%quanta),80_ik)
+              !
+            enddo
+          enddo 
+        enddo
+        !
+        call get_vibronic_energies(Nmax,Nstates,calc)
+        !
         !
         ! Zero point energy:
         !
@@ -1430,20 +1490,23 @@ subroutine fitting_energies
         !
         do nrow=1,pot_npts
           !
-          !  we assume here that the angles are written in degrees, 
-          !  not in radians. I.e. we have to convert the degrees to in radians.
+          !  we assume here that the angles are written in degrees and bond length in in Angstrom
           !     
           r1 =fitting%r1(nrow)
           r2 =fitting%r2(nrow)
           theta=fitting%r3(nrow)*pi/180.0_rk
           !
-          istate = fitting%iPES(nrow)
+          ifield = fitting%iPES(nrow)
+          !
+          if (ifield>Nfields) then 
+            stop 'Potential section: istate is outside he range'
+          endif
           !
           ! Call the potential function. It has to be included into the "poten" subroutine
           !
-          call poten_func(potparam,v,istate,r1,r2,theta)
+          call poten_func(poten(ifield),r1,r2,theta,v)
           !
-          ! eps - epsilon = ab initio energies - calculated pot. energies,
+          ! eps = ab initio energies - calculated pot. energies,
           ! where we comntinue counting the fitting data points starting with fitting%Nenergies - 
           ! obs. data. 
           !
@@ -1454,30 +1517,31 @@ subroutine fitting_energies
           !
           if (fitting%itermax.ge.1.and.(mod(fititer-1,nofititer+1).eq.0)) then
             !
-            ncol=0
-            numpar = 0
-            do  i=1,total_parameters
-              if (ivar(i) .ne. 0) then
-                 !
-                 ncol=ncol+1
-                 tempx=potparam(i)
-                 deltax=fitfactordeltax*abs(tempx)
-                 if (deltax .le. 1e-15) deltax=1e-5
-                 !
-                 potparam(i)=tempx+deltax
-                 call poten_func(potparam,potright,istate,r1,r2,theta)
-                 !
-                 potparam(i)=tempx-deltax
-                 !
-                 call poten_func(potparam,potleft,istate,r1,r2,theta)
-                 !
-                 potparam(i)=tempx
-                 rjacob(nrow+fitting%Nenergies,ncol)=(potright-potleft)/(2.0_rk*deltax)
-                 !
-              endif
+            do  ncol=1,numpar
+              !
+              i = ifitparam(ncol)
+              !
+              ! parameter from wrong states can be skipped 
+              !
+              call which_field_address(i,ifield_,iaddr)
+              !
+              if (ifield/=ifield_) cycle
+              tempx=potparam(i)
+              deltax=fitfactordeltax*abs(tempx)
+              if (deltax .le. 1e-15) deltax=1e-5
+              !
+              potparam(i)=tempx+deltax
+              poten(ifield)%value(iaddr) = potparam(i)
+              call poten_func(poten(ifield),r1,r2,theta,potright)
+              !
+              potparam(i)=tempx-deltax
+              poten(ifield)%value(iaddr) = potparam(i)
+              call poten_func(poten(ifield),r1,r2,theta,potleft)
+              !
+              potparam(i)=tempx
+              poten(ifield)%value(iaddr) = potparam(i)
+              rjacob(nrow+fitting%Nenergies,ncol)=(potright-potleft)/(2.0_rk*deltax)
             enddo ! --- ncol
-            !
-            numpar = ncol
             !
           endif     
           !
@@ -1555,12 +1619,9 @@ subroutine fitting_energies
            !
            !----- update the parameter values ------!
            !
-           ncol=0
-           do i=1,total_parameters
-            if (ivar(i) > 0) then
-                 ncol=ncol+1
-                 potparam(i)=potparam(i)+dx(ncol)
-              endif
+           do  ncol=1,numpar
+              i = ifitparam(ncol)
+              potparam(i)=potparam(i)+dx(ncol)
            enddo
            !
            if (fitting%robust>0) then
@@ -1578,7 +1639,7 @@ subroutine fitting_energies
            call write_potential_input_parameters(poten(1),'field1.fit')
            call write_potential_input_parameters(poten(2),'field2.fit')
            call write_potential_input_parameters(poten(3),'field3.fit')
-           call write_potential_input_parameters(spinorbit(1),'field4.fit')
+           call write_potential_input_parameters(poten(4),'field4.fit')
            !
            ! Estimate standard deviation error. 
            !
@@ -1594,17 +1655,14 @@ subroutine fitting_energies
            call invmat(al,ai,numpar,total_parameters)
            !
            sum_sterr=0.d0
-           ncol = 0 
-           do i=1,total_parameters
-              if (ivar(i) > 0) then
-                  ncol=ncol+1
-                 if (nused.eq.numpar) then  
-                    sterr(ncol)=0
-                 else
-                    sterr(ncol)=sqrt(abs(ai(ncol,ncol)))*stadev
-                    sum_sterr=sum_sterr+abs(sterr(ncol)/potparam(i))
-                 endif
-               endif
+           do  ncol=1,numpar
+              i = ifitparam(ncol)
+              if (nused.eq.numpar) then  
+                 sterr(ncol)=0
+              else
+                 sterr(ncol)=sqrt(abs(ai(ncol,ncol)))*stadev
+                 sum_sterr=sum_sterr+abs(sterr(ncol)/potparam(i))
+              endif
            enddo    
            !
            sum_sterr=sum_sterr/numpar 
@@ -1734,30 +1792,18 @@ subroutine fitting_energies
    if (wtsum/=0) ssq2 = sqrt( sum(eps(1+fitting%Nenergies:npts)**2*dble(wt_bit(1+fitting%Nenergies:npts)))/wtsum )
   
 
-6550   format(/3X,67('-')/'   |  Iter  | Points | Params |   Deviat    |',&
-       '    rms      | Stability |'/&
-       3X,67('-')/,&
-       '   | ',I6,' | ',I6,' | ',I6,' |  ',E12.5,' | ',E12.5,'  |  ',&
-            E10.3,' |',/3X,67('-')/)
 
-
-6551   format(/3X,67('-')/'   |  Iter  | Points | Params |   Deviat    |',&
-       '    ssq1     |   ssq2    |'/&
-       3X,67('-')/,&
-       '   | ',I6,' | ',I6,' | ',I6,' |  ',E12.5,' | ',E12.5,'  |  ',&
-            E10.3,' |',/3X,67('-')/)
-
-6552   format(/3X,80('-')/'   |  Iter  | Points | Params |   Deviat    |',&
-       '    ssq_ener |   ssq_pot | Stability |'/&
-       3X,80('-')/,&
+6552   format(/3X,86('-')/'   |  Iter  | Points | Params |    Deviat     |',&
+       '     ssq_ener  |    ssq_pot  | Stability |'/&
+       3X,86('-')/,&
        '   | ',I6,' | ',I6,' | ',I6,' |  ',E12.5,' | ',E12.5,'  |  ',&
             E10.3,' |',E10.3,' |',/3X,80('-')/)
 
-6553   format(/3X,80('-')/'   |  Iter  | Points | Params |   Deviat    |',&
-       '    rms_ener |   rms_pot | Stability |'/&
+6553   format(/3X,86('-')/'   |  Iter  | Points | Params |    Deviat     |',&
+       '     rms_ener  |    rms_pot  | Stability |'/&
        3X,80('-')/,&
        '   | ',I6,' | ',I6,' | ',I6,' |  ',E12.5,' | ',E12.5,'  |  ',&
-            E10.3,' |',E10.3,' |',/3X,80('-')/)
+            E10.3,' |',E10.3,' |',/3X,86('-')/)
 
        !
        call SYSTEM_CLOCK(itime2,irate2,imax2)
@@ -1789,8 +1835,9 @@ subroutine fitting_energies
             !
             Nsize = max(1,Nstates(iref,irot,ipar_))
             !
-            allocate(calc_(iref,irot,ipar_)%energy(Nsize),stat=alloc)
+            allocate(calc_(iref,irot,ipar_)%energy(Nsize),calc_(iref,irot,ipar_)%quanta(Nsize),stat=alloc)
             call ArrayStart('calc_%energy',alloc,size(calc_(iref,irot,ipar_)%energy),kind(calc_(iref,irot,ipar_)%energy))
+            call ArrayStart('calc_%quanta',alloc,size(calc_(iref,irot,ipar_)%quanta),80_ik)
             !
           enddo
           !
@@ -1885,12 +1932,14 @@ subroutine fitting_energies
           do ipar_ = 1,2
             !
             if (associated(calc_(iref,irot,ipar_)%energy)) deallocate(calc_(iref,irot,ipar_)%energy)
+            if (associated(calc_(iref,irot,ipar_)%quanta)) deallocate(calc_(iref,irot,ipar_)%quanta)
             !                                                                
           enddo                                                              
         enddo                                                                
       enddo
       !
-      call ArrayStop('calc_%energy')                                                               
+      call ArrayStop('calc_%energy') 
+      call ArrayStop('calc_%quanta')                                                               
       !                                                                      
     end subroutine finite_diff_of_energy                                     
     !
@@ -1922,7 +1971,7 @@ subroutine fitting_energies
        ivar(iparams+1:iparams+field%Nterms)     = int(field%weight(1:field%Nterms))
        iparams = iparams+field%Nterms
        !
-       field => spinorbit(1) 
+       field => poten(4)
        potparam(iparams+1:iparams+field%Nterms) = field%value(1:field%Nterms)
        nampar(iparams+1:iparams+field%Nterms)   = field%forcename(1:field%Nterms)
        ivar(iparams+1:iparams+field%Nterms)     = int(field%weight(1:field%Nterms))
@@ -1945,7 +1994,7 @@ subroutine fitting_energies
        field%weight(1:field%Nterms) = real(ivar(iparams+1:iparams+field%Nterms),rk)
        iparams = iparams+field%Nterms
        !
-       field => spinorbit(1) 
+       field => poten(4)
        potparam(iparams+1:iparams+field%Nterms) = field%value(1:field%Nterms)
        field%weight(1:field%Nterms) = real(ivar(iparams+1:iparams+field%Nterms),rk)
        !
@@ -1953,7 +2002,35 @@ subroutine fitting_energies
      !
    end subroutine map_parameters
    !
-   
+
+    ! check which field and the field address of the given potparameter 
+    !
+    subroutine which_field_address(iparamater,ifield,iaddr)
+     !
+     integer(ik),intent(in)  :: iparamater
+     integer(ik),intent(out) :: ifield,iaddr
+     !
+     type(fieldT),pointer      :: field
+     !
+     if (iparamater<=poten(1)%Nterms) then 
+         ifield = 1
+         iaddr = iparamater
+     elseif (iparamater<=poten(1)%Nterms+poten(2)%Nterms) then
+         ifield = 2
+         iaddr = iparamater-poten(1)%Nterms
+     elseif (iparamater<=poten(1)%Nterms+poten(2)%Nterms+poten(3)%Nterms) then
+         ifield = 3
+         iaddr = iparamater-(poten(1)%Nterms+poten(2)%Nterms)
+     elseif (iparamater<=poten(1)%Nterms+poten(2)%Nterms+poten(3)%Nterms+poten(4)%Nterms) then
+         ifield = 4
+         iaddr = iparamater-(poten(1)%Nterms+poten(2)%Nterms+poten(3)%Nterms)
+     else
+       stop 'which_field_address: iparameter is out of range'
+     endif
+     !
+   end subroutine which_field_address
+   !   
+   !
    subroutine run_everest
       !
       logical  ::  SYSTEMQQ  ! system function for  calling extyernal programs, 
@@ -1963,7 +2040,7 @@ subroutine fitting_energies
       call write_potential_input_parameters(poten(1),'field1.fit')
       call write_potential_input_parameters(poten(2),'field2.fit')
       call write_potential_input_parameters(poten(3),'field3.fit')
-      call write_potential_input_parameters(spinorbit(1),'field4.fit')
+      call write_potential_input_parameters(poten(4),'field4.fit')
       !
       if (verbose>=3) write(f_out,"(/'calling Everest program for J = ',f9.1,', iparity =  ',i2'...')") jrot,iparity
       !
@@ -2189,37 +2266,9 @@ subroutine fitting_energies
          !
          Nstates = Nstates_
          !
-         if (associated(calc(1,0,1)%energy)) then 
-           !
-           do iref  = 1,2
-             do irot = 0,Nmax
-               do ipar = 1,2
-                   deallocate(calc(iref,irot,ipar)%energy)
-                   deallocate(calc(iref,irot,ipar)%quanta)
-               enddo
-             enddo
-           enddo
-           !
-           call ArrayStop('calc%energy')
-           call ArrayStop('calc%quanta')
-           !
-         endif
-         !
-         do iref  = 1,2
-           do irot = 0,Nmax
-             do ipar = 1,2
-               !
-               Nsize = max(1,Nstates(iref,irot,ipar))
-               !
-               allocate(calc(iref,irot,ipar)%energy(Nsize),calc(iref,irot,ipar)%quanta(Nsize),stat=alloc)
-               call ArrayStart('calc%energy',alloc,size(calc(iref,irot,ipar)%energy),kind(calc(iref,irot,ipar)%energy))
-               call ArrayStart('calc%quanta',alloc,size(calc(iref,irot,ipar)%quanta),kind(calc(iref,irot,ipar)%quanta))
-               !
-             enddo
-           enddo 
-         enddo
-         !
          rewind(tunit)
+         !
+         return
          !
       endif 
       !
@@ -2265,6 +2314,32 @@ subroutine fitting_energies
       !
     end subroutine get_vibronic_energies
     !
+    !
+    !
+    ! Defining potential energy function 
+    !
+    subroutine poten_func(field,r12,r32,theta,f)
+      !
+      implicit none
+      !
+      type(fieldT),intent(in)  :: field ! field1.fit
+      integer,parameter           :: N = 99
+      !
+      double precision,intent(in) :: r12,r32,theta
+      double precision,intent(out):: f
+      double precision            :: f0,alphae
+      !
+      alphae = field%alpha*pi/180.0_rk
+      !
+      f0 = poten_xyz(field%Nterms,field%r1,field%r2,alphae,field%ipower1,field%ipower2,field%ipower3,&
+                     field%value,field%r1,field%r2,alphae)
+      !
+      f = poten_xyz(field%Nterms,field%r1,field%r2,alphae,field%ipower1,field%ipower2,field%ipower3,field%value,r12,r32,theta)
+      !
+      f = f-f0
+      !
+     end subroutine poten_func
+
 
     !
     subroutine create_the_xpect_job_file(nparams,ivar)
