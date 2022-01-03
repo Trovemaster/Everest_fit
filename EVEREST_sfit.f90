@@ -39,7 +39,6 @@ integer,parameter :: nofititer=6             ! the Jacobi matrix can be evaluate
 integer,parameter :: f_en =206               ! All computed energies (not only those that have obs. counterparts) will be written into here.
 integer,parameter :: f_pot=207               ! The current potential parameters will be written here. 
 integer,parameter :: f_potpoints =208        ! Computed at the current iteration step potential energy points are printed here. 
-integer,parameter :: f_res=209               ! it is where we write the fitting results 
 character(len=200)::  char_job(10)           ! The derectives from the input file are stored in this array. Will be used to create all job-input files.
 character(len=200)::  char_vib_job(100)      ! The vib. derectives from the input file are stored in this array. Will be used to create all job-input files.
 character(len=200)::  char_rot_job(100,2)      ! The rot. derectives from the input file are stored in this array. Will be used to create all job-input files.
@@ -67,8 +66,8 @@ integer,parameter   :: max_input_lines=500000  ! maximum length (in lines) of in
 ! type to deal with the calculated Everest energies 
 !
 type  FTEverestT
-  real(8),pointer   ::  energy(:)   ! to store the calculated energies for  given (J,symmetry)
-  real(8),pointer   ::  derj(:,:)   ! to store the calculated derivatives 
+  real(8),pointer   ::  energy(:)   => null()   ! to store the calculated energies for  given (J,symmetry)
+  real(8),pointer   ::  derj(:,:)   => null() ! to store the calculated derivatives 
 end type FTEverestT
 !
   !
@@ -95,11 +94,11 @@ end type FTEverestT
     real(rk)             :: range(3,10)        ! ranges of values
     real(rk)             :: fit_factor=1.0     ! defines if the term is imaginary or real
     real(rk),pointer     :: value(:)=>null()   ! Expansion parameter or grid values from the input
-    real(rk),pointer     :: weight(:)    ! fit (1) or no fit (0)
-    integer(ik),pointer     :: ipower1(:)    ! power
-    integer(ik),pointer     :: ipower2(:)    ! power
-    integer(ik),pointer     :: ipower3(:)    ! power
-    character(len=cl),pointer :: forcename(:) ! The parameter name
+    real(rk),pointer     :: weight(:)=>null()    ! fit (1) or no fit (0)
+    integer(ik),pointer     :: ipower1(:)=>null()    ! power
+    integer(ik),pointer     :: ipower2(:)=>null()    ! power
+    integer(ik),pointer     :: ipower3(:)=>null()    ! power
+    character(len=cl),pointer :: forcename(:)=>null() ! The parameter name
     !
   end type fieldT
   !
@@ -151,8 +150,8 @@ end type FTEverestT
   !
     type calcT
      !
-     real(rk),pointer   :: energy(:)
-     type(quantaT),pointer  :: quanta(:)
+     real(rk),pointer   :: energy(:)=>null()
+     type(quantaT),pointer  :: quanta(:)=>null()
      !
   end type calcT
 
@@ -161,7 +160,7 @@ end type FTEverestT
      !
      logical              :: run
      integer(ik)          :: nJ = 1        ! Number of J values processed 
-     real(rk),pointer     :: j_list(:)     ! J-values processed in the fit
+     real(rk),pointer     :: j_list(:)=>null()     ! J-values processed in the fit
      integer(ik)          :: iparam(1:2) = (/1,100000/)
      integer(ik)          :: itermax = 500
      integer(ik)          :: Nenergies = 1
@@ -181,19 +180,19 @@ end type FTEverestT
      real(rk)             :: fit_scaling=1.0_rk         ! scaling the fitting correction with this factor >0 and <1
      integer(ik)          :: linear_search = 0 ! use linear scaling to achieve better convergence with the Armijo condition
      real(rk)             :: Vmin(1:4) = 0 
-     type(obsT),pointer   :: obs(:)           ! experimental data
-     real(rk),pointer    :: ai(:)           ! ab initio energies
-     real(rk),pointer    :: r1(:)           ! ab initio geometry
-     real(rk),pointer    :: r2(:)           ! ab initio geometry
-     real(rk),pointer    :: r3(:)           ! ab initio geometry
-     real(rk),pointer    :: weight(:)           ! ab initio geometry
-     integer(ik),pointer :: iPES(:)           ! ab initio geometry
+     type(obsT),pointer   :: obs(:)=>null()         ! experimental data
+     real(rk),pointer    :: ai(:)=>null()           ! ab initio energies
+     real(rk),pointer    :: r1(:)=>null()           ! ab initio geometry
+     real(rk),pointer    :: r2(:)=>null()           ! ab initio geometry
+     real(rk),pointer    :: r3(:)=>null()           ! ab initio geometry
+     real(rk),pointer    :: weight(:)=>null()       ! ab initio geometry
+     integer(ik),pointer :: iPES(:)=>null()         ! ab initio geometry
      !
      !type(paramT),pointer :: param(:)         ! fitting parameters
      !
   end type fittingT
   !
-  type(fieldT),pointer :: poten(:),spinorbit(:)
+  type(fieldT),pointer :: poten(:)=>null(),spinorbit(:)=>null()
   !
   type(fittingT)            :: fitting
 
@@ -329,7 +328,10 @@ subroutine fitting_energies
    ! Read the input file, count all energies, parameters, data points, so that we can 
    ! allocate all needed arrays and only then actuly read the input again. 
    !
-   allocate(poten(nestates),spinorbit(ncouples),stat=alloc)
+   allocate(poten(nestates),stat=alloc)
+   call ArrayStart('poten',alloc,1,4)
+   allocate(spinorbit(ncouples),stat=alloc)
+   call ArrayStart('spinorbit',alloc,1,4)
    !
    ! input.f90
    !
@@ -416,6 +418,8 @@ subroutine fitting_energies
         nJ = i
         !
         allocate(j_list(i),stat=alloc)
+        !
+        call ArrayStart('j_list',alloc,size(j_list),kind(j_list))
         !
         J_list(1:i) = J_list_(1:i)
         !
@@ -589,7 +593,14 @@ subroutine fitting_energies
               ! Allocation of the pot. parameters
               !
               allocate(field%value(Nparam),field%forcename(Nparam),field%weight(Nparam),stat=alloc)
+              call ArrayStart('field%forcename',alloc,size(field%value),kind(field%value))
+              call ArrayStart('field%forcename',alloc,size(field%forcename),kind(field%forcename))
+              call ArrayStart('field%forcename',alloc,size(field%weight),kind(field%weight))
+              !
               allocate(field%ipower1(Nparam),field%ipower2(Nparam),field%ipower3(Nparam),stat=alloc)
+              call ArrayStart('field%forcename',alloc,size(field%ipower1),kind(field%ipower1))
+              call ArrayStart('field%forcename',alloc,size(field%ipower2),kind(field%ipower2))
+              call ArrayStart('field%forcename',alloc,size(field%ipower3),kind(field%ipower3))
               !
               field%value = 0
               field%forcename = 'dummy'
@@ -705,12 +716,10 @@ subroutine fitting_energies
              Nmax = nint(jmax-0.5)
              !
              nJ = i
-             allocate(j_list(i),stat=alloc)
              allocate(fitting%j_list(nJ),stat=alloc)
-             J_list(1:i) = J_list_(1:i)
              !
              fitting%nJ = nJ
-             fitting%J_list = J_list
+             fitting%J_list(1:i) = J_list_(1:i)
              !
            case('ITMAX','ITERMAX','ITER')
              !
@@ -805,6 +814,7 @@ subroutine fitting_energies
              !call readi(fitting%Nenergies)
              !
              allocate (fitting%obs(1:fitting%Nenergies),stat=alloc)
+             !
              if (alloc/=0) then
                write (out,"(' Error ',i0,' initializing obs. energy related arrays')") alloc
                stop 'obs. energy arrays - alloc'
@@ -936,22 +946,16 @@ subroutine fitting_energies
              !call readi(fitting%Nenergies)
              !
              allocate (fitting%ai(1:fitting%Nabinitio),fitting%weight(1:fitting%Nabinitio),stat=alloc)
-             if (alloc/=0) then
-               write (out,"(' Error ',i0,' initializing ai energy related arrays')") alloc
-               stop 'ai energy arrays - alloc'
-             end if
+             call ArrayStart('fitting%ai',alloc,size(fitting%ai),kind(fitting%ai))
+             call ArrayStart('fitting%weight',alloc,size(fitting%weight),kind(fitting%weight))
              !
              allocate (fitting%r1(1:fitting%Nabinitio),fitting%r2(1:fitting%Nabinitio),fitting%r3(1:fitting%Nabinitio),stat=alloc)
-             if (alloc/=0) then
-               write (out,"(' Error ',i0,' initializing ai energy related arrays')") alloc
-               stop 'ai geometries arrays - alloc'
-             end if
+             call ArrayStart('fitting%r1-2-3',alloc,size(fitting%r1),kind(fitting%r1))
+             call ArrayStart('fitting%r1-2-3',alloc,size(fitting%r2),kind(fitting%r2))
+             call ArrayStart('fitting%r1-2-3',alloc,size(fitting%r3),kind(fitting%r3))
              !
              allocate (fitting%iPES(1:fitting%Nabinitio),stat=alloc)
-             if (alloc/=0) then
-               write (out,"(' Error ',i0,' initializing ai energy related arrays')") alloc
-               stop 'ai states array - alloc'
-             end if
+             call ArrayStart('fitting%iPES',alloc,size(fitting%iPES),kind(fitting%iPES))
              !
              iai = 0
              !
@@ -1029,21 +1033,19 @@ subroutine fitting_energies
    !
    allocate (wtall(npts),wt_bit(npts),stat=alloc)
    !
-   if (alloc/=0) then
-     write (f_out,"(' Error ',i,' initializing weights and potpoints')") alloc
-     stop 'weights - alloc'
-   end if
+   call ArrayStart('wtall',alloc,size(wtall),kind(wtall))
+   call ArrayStart('wt_bit',alloc,size(wt_bit),kind(wt_bit))
    !
    allocate(Nstates(2,0:Nmax,2),stat=alloc)
+   call ArrayStart('Nstates',alloc,size(Nstates),kind(Nstates))
    !
    allocate(calc(2,0:Nmax,2),stat=alloc)
+   call ArrayStart('calc',alloc,1,4)
    !
-   if (fitting%robust>0) allocate (sigma(npts),stat=alloc)
-   !
-   if (alloc/=0) then
-     write (f_out,"(' Error ',i,' initializing sigma')") alloc
-     stop 'sigma - alloc'
-   end if
+   if (fitting%robust>0) then 
+     allocate (sigma(npts),stat=alloc)
+     call ArrayStart('sigma',alloc,size(sigma),kind(sigma))
+   endif
    !
    wtall(1:fitting%Nenergies) = fitting%obs(1:fitting%Nenergies)%weight
    wtall(fitting%Nenergies+1:npts) = fitting%weight(1:pot_npts)
@@ -1097,32 +1099,31 @@ subroutine fitting_energies
    !
    ! Allocate objects, that will be used for the fitting procedure:
    !
-   allocate (derj0(total_parameters),rjacob(npts,total_parameters),eps(npts),stat=alloc)
-   if (alloc/=0) then
-       write (f_out,"(' Error ',i,' initializing fitting objects')") alloc
-       stop 'derj0 - alloc'
-   end if
+   allocate (rjacob(npts,total_parameters),eps(npts),stat=alloc)
+   call ArrayStart('rjacob',alloc,size(rjacob),kind(rjacob))
+   call ArrayStart('eps',alloc,size(eps),kind(eps))
    !
-   allocate (potparam(total_parameters),parold(total_parameters),ivar(total_parameters),&
-             nampar(total_parameters),stat=alloc)
-   if (alloc/=0) then
-       write (f_out,"(' Error ',i,' initializing potparam')") alloc
-       stop 'potparam - alloc'
-   end if
+   allocate (potparam(total_parameters),stat=alloc)
+   call ArrayStart('potparam',alloc,size(potparam),kind(potparam))
+   allocate (parold(total_parameters),stat=alloc)
+   call ArrayStart('parold',alloc,size(parold),kind(parold))
+   allocate (ivar(total_parameters),stat=alloc)
+   call ArrayStart('ivar',alloc,size(ivar),kind(ivar))
+   allocate (nampar(total_parameters),stat=alloc)
+   call ArrayStart('nampar',alloc,size(nampar),kind(nampar))
    !
    allocate (ener_obs(fitting%Nenergies),enercalc(fitting%Nenergies),stat=alloc)
-   if (alloc/=0) then
-     write (f_out,"(' Error ',i,' initializing obs. energy related arrays')") alloc
-     stop 'obs. energy arrays - alloc'
-   end if
+   call ArrayStart('ener_obs',alloc,size(ener_obs),kind(ener_obs))
+   call ArrayStart('enercalc',alloc,size(enercalc),kind(enercalc))
    !
    allocate (al(total_parameters,total_parameters),ai(total_parameters,total_parameters),bl(total_parameters),&
              dx(total_parameters),sterr(total_parameters),Tsing(total_parameters,total_parameters),stat=alloc)
-       if (alloc/=0) then
-         write (f_out,"(' Error ',i,' initializing al,bl objects')") alloc
-         stop 'al,bl - alloc'
-       end if
-
+   call ArrayStart('al',alloc,size(al),kind(al))
+   call ArrayStart('ai',alloc,size(ai),kind(ai))
+   call ArrayStart('bl',alloc,size(bl),kind(bl))
+   call ArrayStart('dx',alloc,size(dx),kind(dx))
+   call ArrayStart('sterr',alloc,size(sterr),kind(sterr))
+   call ArrayStart('Tsing',alloc,size(Tsing),kind(Tsing))
    !
    call map_parameters(dir=.true.)
    !   
@@ -1133,10 +1134,7 @@ subroutine fitting_energies
    lwork = 50*total_parameters
    !
    allocate (wspace(lwork),stat=alloc)
-   if (alloc/=0) then 
-    write(f_out,"('wspace - out of memory')")  
-    stop 'wspace - out of memory'
-   endif
+   call ArrayStart('wspace',alloc,size(wspace),kind(wspace))
    !
    ! prepare the file to write all computed energies 
    !
@@ -1780,11 +1778,10 @@ subroutine fitting_energies
       integer(ik) :: N,Nsize,irot
       !
       ! calculate derivatives with respect to parameters
+      !
       allocate (enerright(fitting%Nenergies),enerleft(fitting%Nenergies),stat=alloc)
-      if (alloc/=0) then
-          write (f_out,"(' Error ',i,' initializing enerright objects')") alloc
-          stop 'enerright - alloc'
-      end if
+      call ArrayStart('enerright',alloc,size(enerright),kind(enerright))
+      call ArrayStart('enerleft',alloc,size(enerleft),kind(enerleft))
       !
       do iref = 1,2
         do irot = 0,Nmax
@@ -1793,10 +1790,7 @@ subroutine fitting_energies
             Nsize = max(1,Nstates(iref,irot,ipar_))
             !
             allocate(calc_(iref,irot,ipar_)%energy(Nsize),stat=alloc)
-            if (alloc/=0) then
-              write (out,"(' Error finite_diff_of_energy ',i0,' initializing  calc_(irot,ipar)%energy(Nsize)')") alloc
-              stop 'error finite_diff_of_energy calc_(irot,ipar)%energy(Nsize) arrays - alloc'
-            end if
+            call ArrayStart('calc_%energy',alloc,size(calc_(iref,irot,ipar_)%energy),kind(calc_(iref,irot,ipar_)%energy))
             !
           enddo
           !
@@ -1807,8 +1801,6 @@ subroutine fitting_energies
       !
       do  i=1,total_parameters
         if (ivar(i) > 0) then
-          !
-          write( f_res,"('jacob:',i4,'-th param')") i
           !
           ncol=ncol+1
           tempx=potparam(i)
@@ -1885,6 +1877,9 @@ subroutine fitting_energies
       !
       deallocate (enerright,enerleft)
       !
+      call ArrayStop('enerright')
+      call ArrayStop('enerleft')
+      !
       do iref = 1,2
         do irot = 1,Nrot
           do ipar_ = 1,2
@@ -1893,7 +1888,9 @@ subroutine fitting_energies
             !                                                                
           enddo                                                              
         enddo                                                                
-      enddo                                                                  
+      enddo
+      !
+      call ArrayStop('calc_%energy')                                                               
       !                                                                      
     end subroutine finite_diff_of_energy                                     
     !
@@ -2192,6 +2189,22 @@ subroutine fitting_energies
          !
          Nstates = Nstates_
          !
+         if (associated(calc(1,0,1)%energy)) then 
+           !
+           do iref  = 1,2
+             do irot = 0,Nmax
+               do ipar = 1,2
+                   deallocate(calc(iref,irot,ipar)%energy)
+                   deallocate(calc(iref,irot,ipar)%quanta)
+               enddo
+             enddo
+           enddo
+           !
+           call ArrayStop('calc%energy')
+           call ArrayStop('calc%quanta')
+           !
+         endif
+         !
          do iref  = 1,2
            do irot = 0,Nmax
              do ipar = 1,2
@@ -2199,10 +2212,8 @@ subroutine fitting_energies
                Nsize = max(1,Nstates(iref,irot,ipar))
                !
                allocate(calc(iref,irot,ipar)%energy(Nsize),calc(iref,irot,ipar)%quanta(Nsize),stat=alloc)
-               if (alloc/=0) then
-                 write (out,"(' Error ',i0,' initializing  calc(irot,ipar)%energy(Nsize)')") alloc
-                 stop 'obs. calc(irot,ipar)%energy(Nsize) arrays - alloc'
-               end if
+               call ArrayStart('calc%energy',alloc,size(calc(iref,irot,ipar)%energy),kind(calc(iref,irot,ipar)%energy))
+               call ArrayStart('calc%quanta',alloc,size(calc(iref,irot,ipar)%quanta),kind(calc(iref,irot,ipar)%quanta))
                !
              enddo
            enddo 
