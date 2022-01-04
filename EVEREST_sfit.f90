@@ -27,9 +27,6 @@ integer, parameter :: f_inp = 5, f_out = 6   ! read/write units
 !
 integer,parameter          ::  findif = 3    ! Dinite difference differentiation with 2 or 3 points
 !
-real(rk),parameter :: stadev_best=1e-04,stab_best=1e-12  ! best standard error and srability 
-                                             ! the fit will finish when these reached. 
-!
 real(rk),parameter :: fitfactordeltax=0.001   ! parameter for the finite differncies differention 
 !
 character(len=70) :: deriv_type = 'finite  '  ! hellman or direct - how we calculate derivatives. 
@@ -103,6 +100,7 @@ integer,parameter   :: max_input_lines=500000  ! maximum length (in lines) of in
     integer(ik),pointer     :: ipower2(:)=>null()    ! power
     integer(ik),pointer     :: ipower3(:)=>null()    ! power
     character(len=cl),pointer :: forcename(:)=>null() ! The parameter name
+    integer(ik),pointer     :: iaddress(:)=>null()    ! iaddress in the potparam object 
     type(linkT),pointer          ::  link(:)=>null() ! linking to a value of a different field
     !
   end type fieldT
@@ -169,6 +167,7 @@ integer,parameter   :: max_input_lines=500000  ! maximum length (in lines) of in
      integer(ik)          :: parmax =0          ! total number of all parameters used
      real(rk)             :: factor = 1.0_rk
      real(rk)             :: target_rms = 1e-8
+     real(rk)             :: target_stability = 1e-12
      real(rk)             :: robust = 0
      character(len=cl)    :: geom_file = 'pot.fit'
      character(len=cl)    :: output_file = 'fitting'
@@ -230,7 +229,7 @@ subroutine fitting_energies
   type(fieldT),pointer      :: field
   !
   integer(ik)       :: iut !  iut is a unit number. 
-  integer(ik)  :: iobs,itau,iai,ic,iparams,irange,iparity,ipar,irot,Nsize
+  integer(ik)  :: iobs,itau,iai,ic,iparams,irange,iparity,ipar,irot,Nsize,iaddress,iterm
   logical :: matchfound
   character(len=wl) :: large_fmt
   character(len=cl) :: ioname
@@ -631,17 +630,22 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
               ! Allocation of the pot. parameters
               !
               allocate(field%value(Nparam),field%forcename(Nparam),field%weight(Nparam),stat=alloc)
-              call ArrayStart('field%forcename',alloc,size(field%value),kind(field%value))
+              call ArrayStart('field%value',alloc,size(field%value),kind(field%value))
               call ArrayStart('field%forcename',alloc,size(field%forcename),kind(field%forcename))
-              call ArrayStart('field%forcename',alloc,size(field%weight),kind(field%weight))
+              call ArrayStart('field%weight',alloc,size(field%weight),kind(field%weight))
               !
               allocate(field%ipower1(Nparam),field%ipower2(Nparam),field%ipower3(Nparam),stat=alloc)
-              call ArrayStart('field%forcename',alloc,size(field%ipower1),kind(field%ipower1))
-              call ArrayStart('field%forcename',alloc,size(field%ipower2),kind(field%ipower2))
-              call ArrayStart('field%forcename',alloc,size(field%ipower3),kind(field%ipower3))
+              call ArrayStart('field%ipower',alloc,size(field%ipower1),kind(field%ipower1))
+              call ArrayStart('field%ipower',alloc,size(field%ipower2),kind(field%ipower2))
+              call ArrayStart('field%ipower',alloc,size(field%ipower3),kind(field%ipower3))
+              !
+              allocate(field%iaddress(Nparam),stat=alloc)
+              call ArrayStart('field%iaddress',alloc,size(field%ipower1),kind(field%ipower1))
               !
               allocate(field%link(Nparam),stat=alloc)
-              call ArrayStart('field%forcename',alloc,size(field%link),8_ik)
+              call ArrayStart('field%link',alloc,size(field%link),8_ik)
+              field%link(:)%ifield = 0
+              field%link(:)%iparam = 1
               !
               field%value = 0
               field%forcename = 'dummy'
@@ -784,6 +788,10 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
            case('TARGET_RMS')
              !
              call readf(fitting%target_rms)
+             !
+           case('TARGET_STABILITY')
+             !
+             call readf(fitting%target_stability)
              !
            case('FIT_TYPE')
              !
@@ -1179,6 +1187,21 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
    call ArrayStart('sterr',alloc,size(sterr),kind(sterr))
    call ArrayStart('Tsing',alloc,size(Tsing),kind(Tsing))
    !
+   ! build the mapping betweeb potparam and fields 
+   !
+   iaddress = 0 
+   !
+   do ifield =1,Nfields
+     !
+     do iterm = 1,poten(ifield)%Nterms
+       !
+       iaddress = iaddress + 1
+       !
+       poten(ifield)%iaddress(iterm) = iaddress
+       !
+     enddo
+   enddo
+   !
    call map_parameters(dir=.true.)
    !   
    parold=potparam
@@ -1239,13 +1262,13 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
       !
       !isys = systemqq('rm evib.out erot.out xpect.out')
       !
-      Nstates = 0
-      !
       ! The loop starts here. 
       !
-      do while( fititer.le.fitting%itermax .and. stadev.ge.stadev_best.and. stability.ge.stab_best)
+      do while( fititer.le.fitting%itermax .and. stadev.ge.fitting%target_rms.and. stability.ge.fitting%target_stability)
         !
         fititer = fititer + 1
+        !
+        Nstates = 0 
         !
         ! If fitting%factor is set zero - there would be no fit to the experimental energies. 
         !
@@ -1297,21 +1320,41 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         !
         call get_vibronic_energies(Nmax,Nstates,calc)
         !
-        ! allocate energy arrays before reading the states
+        ! check if the number of the states changed and the energy arrays have wrong  size and need to be reallocated 
         !
-        do iref  = 1,2
-          do irot = 0,Nmax
-            do ipar = 1,2
-              !
-              Nsize = max(1,Nstates(iref,irot,ipar))
-              !
-              allocate(calc(iref,irot,ipar)%energy(Nsize),calc(iref,irot,ipar)%quanta(Nsize),stat=alloc)
-              call ArrayStart('calc%energy',alloc,size(calc(iref,irot,ipar)%energy),kind(calc(iref,irot,ipar)%energy))
-              call ArrayStart('calc%quanta',alloc,size(calc(iref,irot,ipar)%quanta),80_ik)
-              !
-            enddo
-          enddo 
-        enddo
+        if (associated(calc(1,0,1)%energy).and.size(calc(1,0,1)%energy)/=Nstates(1,0,1)) then 
+           !
+           do iref  = 1,2
+             do irot = 0,Nmax
+               do ipar = 1,2
+                 !
+                 deallocate(calc(iref,irot,ipar)%energy,calc(iref,irot,ipar)%quanta)
+                 call ArrayStop('calc%energy')
+                 call ArrayStop('calc%quanta')
+                 !
+               enddo
+             enddo 
+           enddo
+        endif
+        !
+        ! allocate energy arrays before reading the states if necessary 
+        !
+        if (.not.associated(calc(1,0,1)%energy)) then
+          !
+          do iref  = 1,2
+            do irot = 0,Nmax
+              do ipar = 1,2
+                !
+                Nsize = max(1,Nstates(iref,irot,ipar))
+                !
+                allocate(calc(iref,irot,ipar)%energy(Nsize),calc(iref,irot,ipar)%quanta(Nsize),stat=alloc)
+                call ArrayStart('calc%energy',alloc,size(calc(iref,irot,ipar)%energy),kind(calc(iref,irot,ipar)%energy))
+                call ArrayStart('calc%quanta',alloc,size(calc(iref,irot,ipar)%quanta),80_ik)
+                !
+              enddo
+            enddo 
+          enddo
+        endif
         !
         if (verbose>=4) write(f_out,"('  collecing energies...')")
         !
@@ -1556,14 +1599,26 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
               !
               potparam(i)=tempx+deltax
               poten(ifield)%value(iaddr) = potparam(i)
+              !
+              ! update linked values if necessary 
+              call update_linked_parameters
+              !
               call poten_func(poten(ifield),r1,r2,theta,potright)
               !
               potparam(i)=tempx-deltax
+              !
+              ! update linked values if necessary 
+              call update_linked_parameters
+              !
               poten(ifield)%value(iaddr) = potparam(i)
               call poten_func(poten(ifield),r1,r2,theta,potleft)
               !
               potparam(i)=tempx
               poten(ifield)%value(iaddr) = potparam(i)
+              !
+              ! update linked values if necessary 
+              call update_linked_parameters
+              !
               rjacob(nrow+fitting%Nenergies,ncol)=(potright-potleft)/(2.0_rk*deltax)
             enddo ! --- ncol
             !
@@ -1707,9 +1762,11 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         !
         write(f_out,"(/'Potential paramters:')")
         !
-        do i=1,total_parameters
-          write (f_out,"(a8,4x,i2,e22.14)") nampar(i),ivar(i),potparam(i)
-        enddo
+        call print_parameters
+        !
+        !do i=1,total_parameters
+        !  write (f_out,"(a8,4x,i2,e22.14)") nampar(i),ivar(i),potparam(i)
+        !enddo
         !
         ! Print the potential energy points into a separate unit. 
         !
@@ -1970,60 +2027,129 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
      logical,intent(in) :: dir
      !
      type(fieldT),pointer      :: field
+     integer(ik)  :: ifield,iterm,iaddress,iaddress_
+     type(linkT),pointer :: flink
      !
      ! mapping 
      !
      if (dir) then 
        !
-       field => poten(1) 
-       potparam(1:field%Nterms) = field%value(1:field%Nterms)
-       nampar(1:field%Nterms)   = field%forcename(1:field%Nterms)
-       ivar(1:field%Nterms)     = int(field%weight(1:field%Nterms))
-       iparams = field%Nterms
-       !
-       field => poten(2) 
-       potparam(iparams+1:iparams+field%Nterms) = field%value(1:field%Nterms)
-       nampar(iparams+1:iparams+field%Nterms)   = field%forcename(1:field%Nterms)
-       ivar(iparams+1:iparams+field%Nterms)     = int(field%weight(1:field%Nterms))
-       iparams = iparams+field%Nterms
-       !
-       field => poten(3) 
-       potparam(iparams+1:iparams+field%Nterms) = field%value(1:field%Nterms)
-       nampar(iparams+1:iparams+field%Nterms)   = field%forcename(1:field%Nterms)
-       ivar(iparams+1:iparams+field%Nterms)     = int(field%weight(1:field%Nterms))
-       iparams = iparams+field%Nterms
-       !
-       field => poten(4)
-       potparam(iparams+1:iparams+field%Nterms) = field%value(1:field%Nterms)
-       nampar(iparams+1:iparams+field%Nterms)   = field%forcename(1:field%Nterms)
-       ivar(iparams+1:iparams+field%Nterms)     = int(field%weight(1:field%Nterms))
-       iparams = iparams+field%Nterms
+       do ifield =1,Nfields
+         !
+         field => poten(ifield)
+         !
+         do iterm = 1,poten(ifield)%Nterms
+           !
+           iaddress = poten(ifield)%iaddress(iterm)
+           !
+           potparam(iaddress) = field%value(iterm)
+           nampar(iaddress)   = field%forcename(iterm)
+           ivar(iaddress)     = int(field%weight(iterm),ik)
+           !
+           flink => poten(ifield)%link(iterm)
+           !
+           if (flink%ifield/=0) then
+             !
+             iaddress_ = poten(flink%ifield)%iaddress(flink%iparam)
+             !
+             potparam(iaddress) = potparam(iaddress_)
+             !
+           endif 
+           !
+         enddo
+         !
+       enddo
        !
      else
        !
-       field => poten(1) 
-       field%value(1:field%Nterms) = potparam(1:field%Nterms)
-       field%weight(1:field%Nterms) = real(ivar(1:field%Nterms),rk)
-       iparams = field%Nterms
-       !
-       field => poten(2) 
-       field%value(1:field%Nterms) = potparam(iparams+1:iparams+field%Nterms)
-       field%weight(1:field%Nterms) = real(ivar(iparams+1:iparams+field%Nterms),rk)
-       iparams = iparams+field%Nterms
-       !
-       field => poten(3) 
-       field%value(1:field%Nterms) = potparam(iparams+1:iparams+field%Nterms)
-       field%weight(1:field%Nterms) = real(ivar(iparams+1:iparams+field%Nterms),rk)
-       iparams = iparams+field%Nterms
-       !
-       field => poten(4)
-       potparam(iparams+1:iparams+field%Nterms) = field%value(1:field%Nterms)
-       field%weight(1:field%Nterms) = real(ivar(iparams+1:iparams+field%Nterms),rk)
+       do ifield =1,Nfields
+         !
+         field => poten(ifield)
+         !
+         do iterm = 1,poten(ifield)%Nterms
+           !
+           iaddress = poten(ifield)%iaddress(iterm)
+           !
+           field%value(iterm) = potparam(iaddress)
+           field%forcename(iterm) = nampar(iaddress)
+           field%weight(iterm) = real(ivar(iaddress),rk)
+           !
+           flink => poten(ifield)%link(iterm)
+           !
+           if (flink%ifield/=0) then
+             !
+             poten(ifield)%value(iterm) = poten(flink%ifield)%value(flink%iparam)
+             !
+           endif 
+           !
+         enddo
+         !
+       enddo
        !
      endif 
      !
    end subroutine map_parameters
    !
+
+    subroutine print_parameters
+     !
+     type(fieldT),pointer      :: field
+     integer(ik)  :: ifield,iterm
+     type(linkT),pointer :: flink
+     character(len=3) :: fit
+     character(len=130) :: fmt_str
+     !
+     fmt_str = "(a8,1x,3(i3),1x,e22.14,2x,a3,2x,a4,1x,2i4)"
+     !
+     do ifield =1,Nfields
+       !
+       field => poten(ifield)
+       !
+       write (f_out,"(/'Poten',2x,i4)") ifield
+       write (f_out,"(a)") trim(field%name)
+       write (f_out,"(a)") "values"
+       !
+       do iterm = 1,poten(ifield)%Nterms
+         !
+         flink => poten(ifield)%link(iterm)
+         !
+         if (flink%ifield/=0) then
+           !
+           write (f_out,fmt_str)  poten(ifield)%forcename(iterm),&
+                                            poten(ifield)%ipower1(iterm),&
+                                            poten(ifield)%ipower2(iterm),&
+                                            poten(ifield)%ipower3(iterm),&
+                                            poten(ifield)%value(iterm),"   ",&
+                                            "Link",flink%ifield,flink%iparam
+                                            !
+         elseif (poten(ifield)%weight(iterm)>0) then
+           !
+           write (f_out,fmt_str)  poten(ifield)%forcename(iterm),&
+                                            poten(ifield)%ipower1(iterm),&
+                                            poten(ifield)%ipower2(iterm),&
+                                            poten(ifield)%ipower3(iterm),&
+                                            poten(ifield)%value(iterm),"fit"
+         else
+           !
+           write (f_out,fmt_str)  poten(ifield)%forcename(iterm),&
+                                            poten(ifield)%ipower1(iterm),&
+                                            poten(ifield)%ipower2(iterm),&
+                                            poten(ifield)%ipower3(iterm),&
+                                            poten(ifield)%value(iterm)
+           !
+         endif 
+         !
+         !
+       enddo
+       !
+       write (f_out,"(a)") "end"
+       !
+     enddo
+     !
+   end subroutine print_parameters
+   !
+
+
 
     ! check which field and the field address of the given potparameter 
     !
@@ -2063,26 +2189,30 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
       if (verbose>=5) write(f_out,"('   Mapping parameters...')")
       call map_parameters(dir=.false.)
       !
-      if (verbose>=5) write(f_out,"('  Prepating input files with pot. parameters...')")
+      if (verbose>=5) write(f_out,"('   Prepating input files with pot. parameters...')")
       call write_potential_input_parameters(poten(1),'field1.fit')
       call write_potential_input_parameters(poten(2),'field2.fit')
       call write_potential_input_parameters(poten(3),'field3.fit')
       call write_potential_input_parameters(poten(4),'field4.fit')
       !
-      if (verbose>=3) write(f_out,"(/'calling Everest program for J = ',f9.1,', iparity =  ',i2'...')") jrot,iparity
+      if (verbose>=3) write(f_out,"(/'   Calling Everest program with kmax =  ',i5,'...')") nint(kmax+0.5)
       !
 #if (debug_ == 0)
          isys = systemqq(evib_exe//'< evib.inp > evib.out')
 #endif
       !
-      if (verbose>=3) write(f_out,"('calling evrot Everest program for J=0.5...',f8.1)") Jmax
+      if (verbose>=3) write(f_out,"('   Calling evrot Everest program for J=0.5...',f8.1)") Jmax
       !
 #if (debug_ == 0)
          isys = systemqq(erot_exe//'<erot.inp >erot.out')
          !
-         if (verbose>=3) write(f_out,"('Collecting states....')")
+#endif
+         
+#if (debug_ == 0)
          isys = systemqq('./collect_energies_rot.sh erot.out > erot.log')
 #endif
+      !
+      if (verbose>=3) write(f_out,"('   ... done!')")
       !
    end subroutine run_everest
    !
@@ -2346,8 +2476,12 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
     !
     subroutine update_linked_parameters
       !
-      integer(ik) :: ifield,iterm
+      !integer(ik),intent(in) :: Nparams
+      !real(rk),intent(inout) :: potparam(Nparams)
+      !
+      integer(ik) :: ifield,iterm,iaddress
       type(linkT),pointer :: flink
+      !
       !
       ! update linked parameters 
       !
@@ -2361,14 +2495,15 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
             !
             poten(ifield)%value(iterm) = poten(flink%ifield)%value(flink%iparam)
             !
+            !iaddress = poten(ifield)%iaddress(iterm)
+            !
+            !potparam(iaddress) = poten(ifield)%value(iterm)
+            !
           endif 
           !
         enddo
         !
       enddo
-      !
-      ! updating the potenparam values
-      call map_parameters(.true.)
       !
     end subroutine update_linked_parameters
     !
