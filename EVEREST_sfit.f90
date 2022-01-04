@@ -9,7 +9,7 @@ use caoh_param
 !
 implicit none
 !
-integer, parameter    :: verbose  = 3 ! Verbosity level    
+integer  :: verbose  = 3 ! Verbosity level    
 !
 public fitting_energies
 !
@@ -65,14 +65,15 @@ character(len=wl)   :: line_buffer
 integer,parameter   :: max_input_lines=500000  ! maximum length (in lines) of input. 500,000 lines is plenty..
 !                                              ! to avoid feeding in GB of data by mistake.
 
-!
-! type to deal with the calculated Everest energies 
-!
-type  FTEverestT
-  real(8),pointer   ::  energy(:)   => null()   ! to store the calculated energies for  given (J,symmetry)
-  real(8),pointer   ::  derj(:,:)   => null() ! to store the calculated derivatives 
-end type FTEverestT
-!
+  !
+  ! type describing the parameter geneology
+  !
+  type linkT
+    !
+    integer(ik) :: ifield
+    integer(ik) :: iparam
+    !
+  end type linkT
   !
   type fieldT
     !
@@ -102,6 +103,7 @@ end type FTEverestT
     integer(ik),pointer     :: ipower2(:)=>null()    ! power
     integer(ik),pointer     :: ipower3(:)=>null()    ! power
     character(len=cl),pointer :: forcename(:)=>null() ! The parameter name
+    type(linkT),pointer          ::  link(:)=>null() ! linking to a value of a different field
     !
   end type fieldT
   !
@@ -154,7 +156,6 @@ end type FTEverestT
      type(quantaT),pointer  :: quanta(:)=>null()
      !
   end type calcT
-
   !
   type fittingT
      !
@@ -262,8 +263,6 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
   !
   ! objects to store the energies 
   real(rk),allocatable :: enercalc(:),ener_obs(:),eps(:)
-  !
-  type(FTEverestT)                    :: Everest(2)   ! caclualted term Everest values;
   !
   ! objects to needed for the fitting procedure: jacobi matrix, derivatives, matrices to solve the 
   ! the ststem of linear equations, standard errors and so on. 
@@ -377,6 +376,10 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         !
       case("")
        print "(1x)"    !  Echo blank lines
+        !
+      case('VERBOSE')
+        !
+        call readi(verbose)
         !
       case('J_LIST','JLIST','JROT','J')
         !
@@ -637,6 +640,9 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
               call ArrayStart('field%forcename',alloc,size(field%ipower2),kind(field%ipower2))
               call ArrayStart('field%forcename',alloc,size(field%ipower3),kind(field%ipower3))
               !
+              allocate(field%link(Nparam),stat=alloc)
+              call ArrayStart('field%forcename',alloc,size(field%link),8_ik)
+              !
               field%value = 0
               field%forcename = 'dummy'
               field%weight = 0
@@ -680,6 +686,17 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
                    endif
                    !
                  endif 
+                 !
+                 if(trim(w(1:1))=="L".and.nitems>7) then
+                   !
+                   call readi(field%link(iparam)%ifield)
+                   call readi(field%link(iparam)%iparam)
+                   !
+                   ! set the weight of the linked parameter to zero
+                   !
+                   field%weight(iparam) = 0
+                   !
+                 endif
                  !
                  total_parameters = total_parameters + 1
                  !
@@ -1244,7 +1261,7 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         call write_potential_input_parameters(poten(3),'field3.fit')
         call write_potential_input_parameters(poten(4),'field4.fit')
         !
-        if (verbose>=3) write(f_out,"(/'calling Everest program')")
+        if (verbose>=3) write(f_out,"(/'calling evvib Everest program')")
         !
         write(kmax_ch,"(i3)") nint(kmax+0.5)
         write(jmax_ch,"(i3)") nint(2.0_rk*jmax)
@@ -1276,6 +1293,8 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         !
         ! initial counting of states
         !
+        if (verbose>=4) write(f_out,"('  counting states...')")
+        !
         call get_vibronic_energies(Nmax,Nstates,calc)
         !
         ! allocate energy arrays before reading the states
@@ -1294,12 +1313,15 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
           enddo 
         enddo
         !
-        call get_vibronic_energies(Nmax,Nstates,calc)
+        if (verbose>=4) write(f_out,"('  collecing energies...')")
         !
+        call get_vibronic_energies(Nmax,Nstates,calc)
         !
         ! Zero point energy:
         !
         ezero_ = calc(1,0,1)%energy(1)
+        !
+        if (verbose>=3) write(f_out,"('ZPE = ',f15.6)") ezero_
         !
         ! The derivatives of the energy wrt parameters will be evalueted 
         ! only if 1) it is a fitting job, not just energy calculations (j/=0) and
@@ -1313,6 +1335,8 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
           ! the testing of the xpect3 derivativies.
           !
           if (trim(deriv_type)/='hellman'.and.fitting%itermax.ge.1.and.fitting%factor>1e-12) then
+            !
+            if (verbose>=3) write(f_out,"('Using finete differences for the derivatives')")
             !
             call finite_diff_of_energy(rjacob,Nstates,potparam)
             !
@@ -1844,19 +1868,19 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         enddo 
       enddo
       !
-      ncol=0
-      !
-      do  i=1,total_parameters
-        if (ivar(i) > 0) then
+      do  ncol=1,numpar
           !
-          ncol=ncol+1
+          i = ifitparam(ncol)
+          !
+          if (verbose>=5) write(f_out,"('Derivative wrt to parameter ',i4,2x,a9)") i,trim(nampar(i))
+          !
           tempx=potparam(i)
           deltax=fitfactordeltax*abs(tempx)
           if (deltax .le. 1e-15) deltax=1e-6
           !
           potparam(i)=tempx+deltax
           !
-          call run_everest 
+          call run_everest
           !
           call get_vibronic_energies(Nmax,Nstates,calc_)
           ! 
@@ -1918,8 +1942,6 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
           !
           call map_parameters(dir=.false.)
           !
-        endif
-        !
       enddo ! --- ncol
       !
       deallocate (enerright,enerleft)
@@ -2036,7 +2058,12 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
       logical  ::  SYSTEMQQ  ! system function for  calling extyernal programs, 
                              ! platform dependent.  
       !
+      if (verbose>=5) write(f_out,"('   Everesting...')")
+      !
+      if (verbose>=5) write(f_out,"('   Mapping parameters...')")
       call map_parameters(dir=.false.)
+      !
+      if (verbose>=5) write(f_out,"('  Prepating input files with pot. parameters...')")
       call write_potential_input_parameters(poten(1),'field1.fit')
       call write_potential_input_parameters(poten(2),'field2.fit')
       call write_potential_input_parameters(poten(3),'field3.fit')
@@ -2045,13 +2072,15 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
       if (verbose>=3) write(f_out,"(/'calling Everest program for J = ',f9.1,', iparity =  ',i2'...')") jrot,iparity
       !
 #if (debug_ == 0)
-         isys = systemqq(evib_exe//'< evib.inp >> evib.out')
+         isys = systemqq(evib_exe//'< evib.inp > evib.out')
 #endif
       !
-      if (verbose>=3) write(f_out,"('callling rotlev program ...')") 
+      if (verbose>=3) write(f_out,"('calling evrot Everest program for J=0.5...',f8.1)") Jmax
       !
 #if (debug_ == 0)
-         isys = systemqq(erot_exe//'<erot.inp >>erot.out')
+         isys = systemqq(erot_exe//'<erot.inp >erot.out')
+         !
+         if (verbose>=3) write(f_out,"('Collecting states....')")
          isys = systemqq('./collect_energies_rot.sh erot.out > erot.log')
 #endif
       !
@@ -2314,6 +2343,34 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
       !
     end subroutine get_vibronic_energies
     !
+    !
+    subroutine update_linked_parameters
+      !
+      integer(ik) :: ifield,iterm
+      type(linkT),pointer :: flink
+      !
+      ! update linked parameters 
+      !
+      do ifield =1,Nfields
+        !
+        do iterm = 1,poten(ifield)%Nterms
+          !
+          flink => poten(ifield)%link(iterm)
+          !
+          if (flink%ifield/=0) then
+            !
+            poten(ifield)%value(iterm) = poten(flink%ifield)%value(flink%iparam)
+            !
+          endif 
+          !
+        enddo
+        !
+      enddo
+      !
+      ! updating the potenparam values
+      call map_parameters(.true.)
+      !
+    end subroutine update_linked_parameters
     !
     !
     ! Defining potential energy function 
