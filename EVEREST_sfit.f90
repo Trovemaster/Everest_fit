@@ -217,6 +217,8 @@ subroutine fitting_energies
   real(rk)              :: j_list_(1:jlist_max)=-1.0_rk,jmin,jmax,kmax,jrot2,f_t
   !
   character(len=3)   :: kmax_ch,jmax_ch
+  character(len=2)   :: fititer_ch_
+  character(len=2)   :: fititer_ch
   !
   real(rk),allocatable  :: j_list(:)
   !
@@ -224,7 +226,7 @@ subroutine fitting_energies
   !
   logical :: eof
   !
-  integer(ik) :: i,nJ,ipot,iso,iref,istate,jref,Nparam,Nparam_check,iparam,ifield,ifield_,iaddr
+  integer(ik) :: i,nJ,ipot,iso,iref,istate,jref,Nparam,Nparam_check,iparam,ifield,ifield_,iaddr,Total_size=0
   !
   type(fieldT),pointer      :: field
   !
@@ -939,6 +941,14 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
                 call read_line(eof,iut) ; if (eof) exit
                 call readu(w)
                 !
+                ! make sure that the first entry corresponds to J=Jmin, iparity=1
+                !
+                if (iobs==1.and.(itau/=1.or.nint(fitting%obs(iobs)%Jrot-0.5_rk)/=0)) then 
+                   write(f_out,"('Input error: first observed fitting entry must be J=0.5, parity=1',f8.1,i2)") & 
+                                 fitting%obs(iobs)%Jrot,itau
+                   stop 'Input error: first observed fitting entry must be J=0.5, parity=1'
+                endif
+                !
              enddo
              !
            case default
@@ -1254,6 +1264,8 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
       !
       rjacob = 0 
       !
+      Total_size = 0
+      !
       ! Prepaper the first run:
       !
       !!!open(1,file='evib.out',status='replace') ; write(1,"('Start fitting...')") ; close(1)
@@ -1288,10 +1300,19 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         !
         write(kmax_ch,"(i3)") nint(kmax+0.5)
         write(jmax_ch,"(i3)") nint(2.0_rk*jmax)
+        write(fititer_ch_,"(i2)") fititer
+        write(fititer_ch,"(a2)") adjustl(fititer_ch_)
         !
         ! generate the vib-input and rot-input files using the tempates provided
         !
 #if (debug_ == 0)
+           !
+           if (verbose>=5.and.fititer>1) then 
+               isys = systemqq('cp evib.inp evib.inp'//fititer_ch)
+               isys = systemqq('cp erot.inp  erot.inp'//fititer_ch)
+               isys = systemqq('cp erot.out  erot.out'//fititer_ch)
+           endif
+           !
            isys = systemqq('vib_inp.sh '//kmax_ch)
            !
            isys = systemqq('rot_inp.sh '//kmax_ch//' '//jmax_ch)
@@ -1316,26 +1337,28 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         !
         ! initial counting of states
         !
-        if (verbose>=4) write(f_out,"('  counting states...')")
+        if (verbose>=4) write(f_out,"('   Counting states...')")
         !
         call get_vibronic_energies(Nmax,Nstates,calc)
         !
         ! check if the number of the states changed and the energy arrays have wrong  size and need to be reallocated 
         !
-        if (associated(calc(1,0,1)%energy).and.size(calc(1,0,1)%energy)/=Nstates(1,0,1)) then 
+        if (associated(calc(1,0,1)%energy).and.sum(Nstates)/=Total_size) then 
            !
            do iref  = 1,2
              do irot = 0,Nmax
                do ipar = 1,2
                  !
                  deallocate(calc(iref,irot,ipar)%energy,calc(iref,irot,ipar)%quanta)
-                 call ArrayStop('calc%energy')
-                 call ArrayStop('calc%quanta')
                  !
                enddo
              enddo 
            enddo
+           call ArrayStop('calc%energy')
+           call ArrayStop('calc%quanta')
         endif
+        !
+        Total_size = sum(Nstates)
         !
         ! allocate energy arrays before reading the states if necessary 
         !
@@ -1356,7 +1379,7 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
           enddo
         endif
         !
-        if (verbose>=4) write(f_out,"('  collecing energies...')")
+        if (verbose>=4) write(f_out,"('   Collecting energies...')")
         !
         call get_vibronic_energies(Nmax,Nstates,calc)
         !
@@ -1437,7 +1460,7 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
           Jrot = fitting%obs(nrow)%Jrot
           iparity = fitting%obs(nrow)%iparity
           iref = fitting%obs(nrow)%iref
-          nrot = int(jrot)
+          Nrot = nint(Jrot-0.5_rk)
           !
           ipar_ = 1 ; if (iparity==-1) ipar_ = 2
           !
@@ -1492,47 +1515,47 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
                 !
                 do irow = 1,Nstates(iref,Nrot,ipar_)
                   !
-                  nrow = 0
+                  iobs = 0
                   !
-                  loop_nrow : do 
+                  loop_iobs : do 
                     !
-                    nrow = nrow+1
-                    if (irow==fitting%obs(nrow)%N.and.nint(Jrot-fitting%obs(nrow)%Jrot)==0 &
-                        .and.iref==fitting%obs(nrow)%iref &
-                        .and.iparity==fitting%obs(nrow)%iparity ) then
+                    iobs = iobs+1
+                    if (irow==fitting%obs(iobs)%N.and.nint(Jrot-fitting%obs(iobs)%Jrot)==0 &
+                        .and.iref==fitting%obs(iobs)%iref &
+                        .and.iparity==fitting%obs(iobs)%iparity ) then
                       !
-                      exit loop_nrow
+                      exit loop_iobs
                       !
                     endif
                     !
-                    if (nrow==fitting%Nenergies) exit loop_nrow 
+                    if (iobs==fitting%Nenergies) exit loop_iobs 
                     !
-                  enddo loop_nrow
+                  enddo loop_iobs
                   !
-                  if (nrow<fitting%Nenergies) then
+                  if (iobs<fitting%Nenergies) then
                      !
                      mark = " "
                      !
-                     if (abs(eps(nrow))>1.0) mark = "!"
+                     if (abs(eps(iobs))>1.0) mark = "!"
                      !
                      write(f_en,"(2i5,f8.1,i5,' ',3f13.4,2x,e9.2,2x,a1,2x,4(i3),f8.1,2x,3(i3))") &
-                                     irow,fitting%obs(nrow)%n,Jrot,fitting%obs(nrow)%iparity,&
-                                     !fitting%obs(nrow)%iref,&
-                                     enercalc(nrow)+eps(nrow),enercalc(nrow),-eps(nrow),&
-                                     wtall(nrow),mark,&
+                                     irow,fitting%obs(iobs)%n,Jrot,iparity,&
+                                     !fitting%obs(iobs)%iref,&
+                                     enercalc(iobs)+eps(iobs),enercalc(iobs),-eps(iobs),&
+                                     wtall(iobs),mark,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%v1,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%v2,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%v3,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%istate,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%omega,&
-                                     fitting%obs(nrow)%quanta%v1,&
-                                     fitting%obs(nrow)%quanta%v2,&
-                                     fitting%obs(nrow)%quanta%v3
+                                     fitting%obs(iobs)%quanta%v1,&
+                                     fitting%obs(iobs)%quanta%v2,&
+                                     fitting%obs(iobs)%quanta%v3
 
                      !
                   else
                      !
-                     write(f_en,"(2i5,f8.1,i5,' ',3f13.4,2x,e9.2,5x,4(i3),f8.1)") irow,0,Jrot,ipar_,0.0_rk,&
+                     write(f_en,"(2i5,f8.1,i5,' ',3f13.4,2x,e9.2,5x,4(i3),f8.1)") irow,0,Jrot,iparity,0.0_rk,&
                                      calc(iref,Nrot,ipar_)%energy(irow)-ezero_,0.0_rk,0.0_rk,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%v1,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%v2,&
@@ -1860,6 +1883,8 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         !
       enddo  ! --- fititer
       !
+      call MemoryReport
+      !
    enddo outer_loop
    !
    ssq1 = 0 ; ssq2 = 0 
@@ -1871,6 +1896,9 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
    wtsum = sum(wt_bit(1+fitting%Nenergies:npts))
    !
    if (wtsum/=0) ssq2 = sqrt( sum(eps(1+fitting%Nenergies:npts)**2*dble(wt_bit(1+fitting%Nenergies:npts)))/wtsum )
+   !
+   call memoryreport 
+   !
   
 
 
@@ -1989,15 +2017,23 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
              !
              enerleft(iobs) = calc_(iref,nrot,ipar_)%energy(N)
              ! 
-          enddo 
+          enddo
+          !
+          if (verbose>=5) write(f_out,"('      rjacob...'/)")
           !
           rjacob(1:fitting%Nenergies,ncol)=(enerright(1:fitting%Nenergies)-enerleft(1:fitting%Nenergies))/(2.0_rk*deltax)
           !
-          rjacob(2:fitting%Nenergies,ncol) = rjacob(2:fitting%Nenergies,ncol) - rjacob(1,ncol)
+          rjacob(1:fitting%Nenergies,ncol) = rjacob(1:fitting%Nenergies,ncol) - rjacob(1,ncol)
           !
           potparam(i)=tempx
           !
+          if (verbose>=5) write(f_out,"('      ...done'/)")
+          !
+          if (verbose>=5) write(f_out,"('      Mappin parameters...'/)")
+          !
           call map_parameters(dir=.false.)
+          !
+          if (verbose>=5) write(f_out,"('      ...done'/)")
           !
       enddo ! --- ncol
       !
@@ -2007,11 +2043,14 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
       call ArrayStop('enerleft')
       !
       do iref = 1,2
-        do irot = 1,Nrot
+        do irot = 0,Nmax
           do ipar_ = 1,2
             !
             if (associated(calc_(iref,irot,ipar_)%energy)) deallocate(calc_(iref,irot,ipar_)%energy)
             if (associated(calc_(iref,irot,ipar_)%quanta)) deallocate(calc_(iref,irot,ipar_)%quanta)
+            !
+            calc_(iref,irot,ipar_)%energy=>null()
+            calc_(iref,irot,ipar_)%quanta=>null()
             !                                                                
           enddo                                                              
         enddo                                                                
@@ -2019,6 +2058,8 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
       !
       call ArrayStop('calc_%energy') 
       call ArrayStop('calc_%quanta')                                                               
+      !
+      if (verbose>=5) write(f_out,"('... done!'/)")
       !                                                                      
     end subroutine finite_diff_of_energy                                     
     !
@@ -2370,12 +2411,14 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
       type(calcT),intent(inout) :: calc(2,0:Nmax,2)
       !
       integer(ik)              :: tunit,tau,Kc,Pot,Kma,ISR,J2,ipar,Nrot,Ntot,Nsize,nn
-      integer(ik)    :: alloc,i,irot,iref,v1,v2,v3,ka
+      integer(ik)    :: i,iref,v1,v2,v3,ka
       real(rk)  :: Energy,De,wei,Ome,Wome,Wma,Jrot
       character(len=5)   :: Jch
       integer(ik)  :: Nstates_(2,0:Nmax,2)
       !
       tunit = 22
+      !
+      if (verbose>=5) write(f_out,"('   Extracting rovibronic energies ...')")
       !
       open(tunit,file='erot.log',action='read',status='old')
       !
@@ -2454,6 +2497,8 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         !
         nn = Nstates_(iref,Nrot,ipar)
         !
+        if (nn>size(calc(iref,Nrot,ipar)%energy)) cycle
+        !
         calc(iref,Nrot,ipar)%energy(nn) = Energy
         calc(iref,Nrot,ipar)%quanta(nn)%v1 = v1
         calc(iref,Nrot,ipar)%quanta(nn)%v2 = v2
@@ -2467,7 +2512,9 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
       121 continue
           exit
 
-      end do      
+      end do
+      !
+      if (verbose>=5) write(f_out,"('   ... done!')")
       !
       close(tunit,status='keep')
       !
