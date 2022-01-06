@@ -213,6 +213,7 @@ subroutine fitting_energies
   integer           :: alloc, ierror      ! error state variables 
   !
   integer,parameter  :: jlist_max = 500
+  integer(ik) :: maxiter_as = 3     ! maximal number of iterations to find a match for assignement  !
   !
   real(rk)              :: j_list_(1:jlist_max)=-1.0_rk,jmin,jmax,kmax,jrot2,f_t
   !
@@ -231,7 +232,8 @@ subroutine fitting_energies
   type(fieldT),pointer      :: field
   !
   integer(ik)       :: iut !  iut is a unit number. 
-  integer(ik)  :: iobs,itau,iai,ic,iparams,irange,iparity,ipar,irot,Nsize,iaddress,iterm
+  integer(ik)  :: iobs,itau,iai,ic,iparams,irange,iparity,ipar,irot,Nsize,iaddress,iterm,k0
+  integer(ik)  :: itau_,iter_th,iener_,jobs
   logical :: matchfound
   character(len=wl) :: large_fmt
   character(len=cl) :: ioname
@@ -239,11 +241,11 @@ subroutine fitting_energies
   integer(ik)  :: nmax,nrot
   integer(ik),allocatable  :: Nstates(:,:,:)
   type(calcT),allocatable  :: calc(:,:,:)
+  character(len=1),allocatable  :: mark(:)
 
 
   integer           :: npts,pot_npts,nused      ! number of data points: current, all obs. energies, all pot. points, and actuall used. 
-  !
-  integer           :: nrow,ncol               ! loop-variables
+  integer           :: nrow,ncol 
   integer           :: numpar                  ! number of varying parameters 
   integer           :: ndigits                 ! number of rounded digits in the parameters output. 
   !
@@ -256,7 +258,7 @@ subroutine fitting_energies
   character(len=8),allocatable :: nampar(:)   ! parameter names 
   
   integer,allocatable :: ivar(:)              ! switch for the parameters fit: ivar(i) = 0 for the parameters that do not vary.
-integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
+  integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
   !
   !integer,allocatable :: J_obs(:),sym_obs(:) ! Arrays where we 
   !                                           ! store the information about obs. energies: 
@@ -926,6 +928,14 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
                 !
                 call readi(fitting%obs(iobs)%quanta%istate)
                 !
+                ! skip current line if this state is outside the range 
+                if (fitting%obs(iobs)%quanta%istate>Nestates) then 
+                  iobs = iobs-1
+                  call read_line(eof,iut) ; if (eof) exit
+                  call readu(w)
+                  cycle
+                endif
+                !
                 ! iref = 1 (state=1) and iref=2 (state=2,3)
                 !
                 fitting%obs(iobs)%iref = min(fitting%obs(iobs)%quanta%istate,2)
@@ -933,8 +943,8 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
                 call readi(fitting%obs(iobs)%quanta%v1)
                 call readi(fitting%obs(iobs)%quanta%v2)
                 call readi(fitting%obs(iobs)%quanta%v3)
-                call readf(fitting%obs(iobs)%quanta%F)
                 call readi(fitting%obs(iobs)%quanta%ilambda)
+                call readf(fitting%obs(iobs)%quanta%omega)
                 !
                 call readf(fitting%obs(iobs)%weight)
                 !
@@ -1188,6 +1198,9 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
    call ArrayStart('ener_obs',alloc,size(ener_obs),kind(ener_obs))
    call ArrayStart('enercalc',alloc,size(enercalc),kind(enercalc))
    !
+   allocate (mark(fitting%Nenergies),stat=alloc)
+   if (alloc/=0) stop 'error allocating mark' 
+   !
    allocate (al(total_parameters,total_parameters),ai(total_parameters,total_parameters),bl(total_parameters),&
              dx(total_parameters),sterr(total_parameters),Tsing(total_parameters,total_parameters),stat=alloc)
    call ArrayStart('al',alloc,size(al),kind(al))
@@ -1215,6 +1228,8 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
    call map_parameters(dir=.true.)
    !   
    parold=potparam
+   !
+   mark(:) = ' '
    !
    ! The last object to allocate - the lapack related work array
    !
@@ -1389,6 +1404,88 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         !
         if (verbose>=3) write(f_out,"('ZPE = ',f15.6)") ezero_
         !
+        ! if threshold_lock>0, correct the addresses of the energies in case of accidential swaps
+        ! by comparing with energies within the "threshold_lock"-range and with "exp" quantum numbers.
+        ! if threshold_lock<0, find closets matches with experimental energies 
+        ! if threshold_lock=0, do nothing
+        !
+        mark = " "
+        !
+        if (abs(fitting%threshold_lock)>0) then 
+          !
+          k0 = 1
+          !
+          if (fitting%threshold_lock<0)  maxiter_as = 1
+          !
+          jrot_ = fitting%obs(1)%jrot
+          itau_ = 1 ; if ( fitting%obs(1)%iparity==-1 ) itau_ = 2
+          !
+          do iobs = 1,fitting%Nenergies
+            !
+            Jrot = fitting%obs(iobs)%Jrot
+            iparity = fitting%obs(iobs)%iparity
+            iref = fitting%obs(iobs)%iref
+            irot = nint(Jrot-0.5_rk)
+            !
+            itau = 1 ; if (iparity==-1) itau = 2
+            !
+            if (Jrot>jmax) cycle
+            !
+            iener = fitting%obs(iobs)%N
+            !
+            mark(iobs) = '*'
+            !
+            loop_thresh : do iter_th = 1,maxiter_as
+               !
+               loop_iener : do  iener_= k0,Nstates(iref,irot,itau)
+                    !
+                    do jobs = max(iobs-iener_,1),iobs-1
+                      !
+                      if (nint(jrot-fitting%obs(jobs)%jrot)/=0.or.itau-1/=fitting%obs(jobs)%iparity) cycle
+
+                      if (nint(Jrot-fitting%obs(jobs)%Jrot)/=0.or.iref/=fitting%obs(jobs)%iref.or.&
+                         iparity/=fitting%obs(jobs)%iparity ) cycle
+                      !
+                      if ( fitting%obs(jobs)%N==iener ) cycle loop_iener
+                      !
+                    enddo
+                    !
+                    if (iener_>Nstates(iref,irot,itau)) then
+                      write(out,"('fitting error: the size of calc energy is too small ',i8,';')") Nstates(iref,irot,itau)
+                      write(out,"('               J= ',f9.2,' and state  ',i8)") jrot,iener_
+                      stop 'error: the size of calc energy is too small'
+                    endif
+                    !
+                    if ( abs( fitting%obs(iobs)%energy-( calc(iref,irot,itau)%energy(iener_)-ezero_ ) )<= &
+                             real(iter_th,rk)*abs(fitting%threshold_lock).and.&
+                          ! threshold_lock>0, QN match
+                        ( ( calc(iref,irot,itau)%quanta(iener_)%v1==fitting%obs(iobs)%quanta%v1.and.&
+                            calc(iref,irot,itau)%quanta(iener_)%v2==fitting%obs(iobs)%quanta%v2.and.&
+                            calc(iref,irot,itau)%quanta(iener_)%v3==fitting%obs(iobs)%quanta%v3.and.&
+                            calc(iref,irot,itau)%quanta(iener_)%ilambda==fitting%obs(iobs)%quanta%ilambda.and.&
+                            nint(calc(iref,irot,itau)%quanta(iener_)%omega-fitting%obs(iobs)%quanta%omega)==0.and.&
+                            calc(iref,irot,itau)%quanta(iener_)%istate ==fitting%obs(iobs)%quanta%istate ).or.& 
+                           ! energy match + state + vib QN match 
+                           ( fitting%threshold_lock<0.and. &
+                            calc(iref,irot,itau)%quanta(iener_)%istate ==fitting%obs(iobs)%quanta%istate ) ) ) then 
+                        !
+                        fitting%obs(iobs)%N = iener_
+                        mark(iobs) = ' '
+                        exit loop_thresh
+                        !
+                    endif 
+                    !
+                 enddo loop_iener
+                 !
+            enddo loop_thresh
+            !
+            if (mark(iobs) == ' ')  k0 = max(fitting%obs(iobs)%N-iener_,1)
+            !
+          enddo
+          !
+        endif
+        !
+        !
         ! The derivatives of the energy wrt parameters will be evalueted 
         ! only if 1) it is a fitting job, not just energy calculations (j/=0) and
         !         2) it is a energy fitting job, not just a fit to the ab initio points 
@@ -1450,7 +1547,7 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         ! Only fitted energies are printed. 
         !
         write(f_out,"(/1x,100('-'))")
-        write(f_out,"('| ## |  N |      J  |par |    Obs.    |   Calc.    | Obs.-Calc. |   Weight |    v1 v2 v3 St    Ome  |')")
+        write(f_out,"('| ## |  N |      J  |par |    Obs.    |   Calc.    | Obs.-Calc. |   Weight |    St v1 v2 v3 La Ome  |')")
         write(f_out,"(1x,100('-'))")
         !
         eps = 0
@@ -1476,17 +1573,22 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
           !
           eps(nrow) = fitting%obs(nrow)%energy-enercalc(nrow)
           !
-          write (f_out,"(2i5,f8.1,i5,2x,3f13.4,2x,e9.2,4x,4(i3),f8.1,2x,3(i3))") &
+          write (f_out,"(2i5,f8.1,i5,2x,3f13.4,2x,e9.2,4x,5(i3),f5.1,2x,5(i3),f5.1,a)") &
              nrow,iener,Jrot,iparity,enercalc(nrow)+eps(nrow),enercalc(nrow),-eps(nrow),&
              wtall(nrow),&
+             calc(iref,Nrot,ipar_)%quanta(iener)%istate,&
              calc(iref,Nrot,ipar_)%quanta(iener)%v1,&
              calc(iref,Nrot,ipar_)%quanta(iener)%v2,&
              calc(iref,Nrot,ipar_)%quanta(iener)%v3,&
-             calc(iref,Nrot,ipar_)%quanta(iener)%istate,&
+             calc(iref,Nrot,ipar_)%quanta(iener)%ilambda,&             
              calc(iref,Nrot,ipar_)%quanta(iener)%omega,&
+             fitting%obs(nrow)%quanta%istate,&
              fitting%obs(nrow)%quanta%v1,&
              fitting%obs(nrow)%quanta%v2,&
-             fitting%obs(nrow)%quanta%v3
+             fitting%obs(nrow)%quanta%v3,&
+             fitting%obs(nrow)%quanta%ilambda,&
+             fitting%obs(nrow)%quanta%omega,&
+             mark(nrow)
              !
         enddo ! --- nrow
         !
@@ -1498,7 +1600,7 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
         write(f_en,"(/'Iteration = ',i4)") fititer
         !
         write(f_en,"(/1x,100('-'))")
-        write(f_en,"('| ## |  N |      J  |par |    Obs.    |   Calc.    | Obs.-Calc. |   Weight |    v1 v2 v3 St    Ome  |')")
+        write(f_en,"('| ## |  N |      J  |par |    Obs.    |   Calc.    | Obs.-Calc. |   Weight |    St v1 v2 v3 La Ome  |')")
         write(f_en,"(1x,100('-'))")
         !
         do iref = 1,2
@@ -1538,29 +1640,35 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
                      !
                      if (abs(eps(iobs))>1.0) mark = "!"
                      !
-                     write(f_en,"(2i5,f8.1,i5,' ',3f13.4,2x,e9.2,2x,a1,2x,4(i3),f8.1,2x,3(i3))") &
+                     write(f_en,"(2i5,f8.1,i5,2x,3f13.4,2x,e9.2,4x,5(i3),f5.1,2x,5(i3),f5.1,a)") &
                                      irow,fitting%obs(iobs)%n,Jrot,iparity,&
                                      !fitting%obs(iobs)%iref,&
                                      enercalc(iobs)+eps(iobs),enercalc(iobs),-eps(iobs),&
-                                     wtall(iobs),mark,&
+                                     wtall(iobs),&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%istate,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%v1,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%v2,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%v3,&
-                                     calc(iref,Nrot,ipar_)%quanta(irow)%istate,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%ilambda,&                                     
                                      calc(iref,Nrot,ipar_)%quanta(irow)%omega,&
+                                     fitting%obs(iobs)%quanta%istate,&
                                      fitting%obs(iobs)%quanta%v1,&
                                      fitting%obs(iobs)%quanta%v2,&
-                                     fitting%obs(iobs)%quanta%v3
+                                     fitting%obs(iobs)%quanta%v3,&
+                                     fitting%obs(iobs)%quanta%ilambda,&
+                                     fitting%obs(iobs)%quanta%omega,&
+                                     mark(iobs)
 
                      !
                   else
                      !
-                     write(f_en,"(2i5,f8.1,i5,' ',3f13.4,2x,e9.2,5x,4(i3),f8.1)") irow,0,Jrot,iparity,0.0_rk,&
+                     write(f_en,"(2i5,f8.1,i5,2x,3f13.4,2x,e9.2,4x,5(i3),f5.1)") irow,0,Jrot,iparity,0.0_rk,&
                                      calc(iref,Nrot,ipar_)%energy(irow)-ezero_,0.0_rk,0.0_rk,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%istate,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%v1,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%v2,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%v3,&
-                                     calc(iref,Nrot,ipar_)%quanta(irow)%istate,&
+                                     calc(iref,Nrot,ipar_)%quanta(irow)%ilambda,&
                                      calc(iref,Nrot,ipar_)%quanta(irow)%omega
 
                                      
@@ -1589,7 +1697,7 @@ integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
           ifield = fitting%iPES(nrow)
           !
           if (ifield>Nfields) then 
-            stop 'Potential section: istate is outside he range'
+            stop 'Potential section: istate is outside the range'
           endif
           !
           ! Call the potential function. It has to be included into the "poten" subroutine
