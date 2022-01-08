@@ -2585,7 +2585,7 @@ subroutine fitting_energies
       Nstates_ = 0
       !
       do 
-        read(tunit,"(a5,2x,i2,1x,i5,2(1x,f12.4),1x,i3,1x,2(1x,i3),3(1x,i2),1x,f5.3,1x,f3.1,1x,f5.3,1x,i2)",end=121) &
+        read(tunit,"(a5,2x,i2,1x,i5,2(1x,f12.4),1x,i3,2(1x,i3),3(1x,i2),1x,f5.3,f4.1,1x,f5.3,1x,i2)",end=121) &
              Jch,tau,nn,Energy,De,iref,Ka,Kc,v1,v2,v3,Wei,Ome,Wome,Pot !,Kma,Wma,ISR,  N
         !
         do i=1,len_trim(Jch)
@@ -2613,7 +2613,7 @@ subroutine fitting_energies
         calc(iref,Nrot,ipar)%quanta(nn)%v3 = v3
         calc(iref,Nrot,ipar)%quanta(nn)%istate = Pot
         calc(iref,Nrot,ipar)%quanta(nn)%Omega = Ome
-        calc(iref,Nrot,ipar)%quanta(nn)%Ka = Ka
+        calc(iref,Nrot,ipar)%quanta(nn)%ilambda = Ka
         !
         cycle
         !         
