@@ -281,18 +281,6 @@ subroutine fitting_energies
   logical          :: still_run
   integer          :: j,l,info_
   integer          :: iener,irow,icolumn,ipar_
-  !
-  !     For the details on the robust fit see J.K.G. Watson, JMS, 219, 326 (2003).
-  !     The idea is optimize the weigth factors iteratevely depending on the fitting results, as  follows:
-  !     w_i = 1 / sigma_i^2+alpha*eps_i^2 
-  !     where sigma_i represent the experimental data precision, alpha is the Watson parameter (can be also adjsuted) and 
-  !     eps_i = Obs - Calc deviatons. 
-  !
-  real(rk) :: robust_fit = 0 
-  !                   robust_fit = 0 corresponds to the standard fit, the robust fittting procedure is switched off. 
-  !                   robust_fit <> =0, the robust fittting procedure is on.
-  !                   robust_fit also defines the target accuracy of the fit. For example for robust_fit  = 0.001 
-  !                   all data with (obs-calc) < 0.001 will be considered as relatively bad (i.e. outliers ) 
   !                   and their weights will we reduced. 
   !
   ! different character objects 
@@ -437,10 +425,6 @@ subroutine fitting_energies
       case('FIT_FACTOR')
         !
         call readf(fit_factor)
-        !
-      case('ROBUST')
-        !
-        call readf(robust_fit)
         !
       case('OUTNAME','OUT_NAME')
         !
@@ -1161,11 +1145,22 @@ subroutine fitting_energies
      endif
    enddo
    !
+   !
+   !     For the details on the robust fit see J.K.G. Watson, JMS, 219, 326 (2003).
+   !     The idea is optimize the weigth factors iteratevely depending on the fitting results, as  follows:
+   !     w_i = 1 / sigma_i^2+alpha*eps_i^2 
+   !     where sigma_i represent the experimental data precision, alpha is the Watson parameter (can be also adjsuted) and 
+   !     eps_i = Obs - Calc deviatons. 
+   !
+   !                   robust_fit = 0 corresponds to the standard fit, the robust fittting procedure is switched off. 
+   !                   robust_fit <> =0, the robust fittting procedure is on.
+   !                   robust_fit also defines the target accuracy of the fit. For example for robust_fit  = 0.001 
+   !                   all data with (obs-calc) < 0.001 will be considered as relatively bad (i.e. outliers ) 
    ! sigma = exp. data precision for robust fit 
    !
    if (fitting%robust>0) then
      !
-     sigma = 1.0d0
+     sigma = 1.0_rk
      do i=1,npts
        if (wtall(i)>0) sigma(i) = sigma(i)/sqrt(wtall(i))*fitting%robust
      enddo
@@ -1684,6 +1679,21 @@ subroutine fitting_energies
         enddo 
         !
         !
+        ! switch off energies with large obs-calc assuming unwanted swapping 
+        if (fitting%threshold_obs_calc>small_) then
+           do iener = 1,fitting%Nenergies
+              if (abs(eps(iener))>fitting%threshold_obs_calc.and.wtall(iener)>small_) then
+                wtall(iener) = 0
+                if (fitting%robust>small_) sigma(iener) = 0
+                eps(iener) = 0
+                nused = nused - 1
+              endif
+           enddo
+           nused = max(nused,1)
+           wtsum = sum(wtall(1:npts))
+           wtall(1:npts) = wtall(1:npts)/wtsum
+        endif 
+        !
         ! Here the potential energy section starts. 
         !
         do nrow=1,pot_npts
@@ -2014,7 +2024,7 @@ subroutine fitting_energies
        '     ssq_ener  |    ssq_pot  | Stability |'/&
        3X,86('-')/,&
        '   | ',I6,' | ',I6,' | ',I6,' |  ',E12.5,' | ',E12.5,'  |  ',&
-            E10.3,' |',E10.3,' |',/3X,80('-')/)
+            E10.3,' |',E10.3,' |',/3X,86('-')/)
 
 6553   format(/3X,86('-')/'   |  Iter  | Points | Params |    Deviat     |',&
        '     rms_ener  |    rms_pot  | Stability |'/&
@@ -2754,11 +2764,11 @@ subroutine fitting_energies
     subroutine robust_fitting(sigma,eps,wt)
 
       !real(8),intent(inout) :: a_wats
-      real(8),intent(in)    :: sigma(:),eps(:)
-      real(8),intent(inout) :: wt(:)
+      real(rk),intent(in)    :: sigma(:),eps(:)
+      real(rk),intent(inout) :: wt(:)
       !
-      integer            :: npts,i,nrow,nused
-      real               :: da1,da2,wtsum,da
+      integer(ik)            :: npts,i,nrow,nused
+      real(rk)              :: da1,da2,wtsum,da,a_wats
       !
       npts = size(sigma)
       !
@@ -2766,6 +2776,12 @@ subroutine fitting_energies
       do i=1,npts
         if (wt(i)>0) nused=nused+1
       enddo
+      !
+      !Watson alpha-parameter
+      ! 
+      a_wats = 0.001_rk
+      !
+      if (verbose>=4) write(out,"('Watson parameter =',f18.8)") a_wats
       !
       !Watson alpha-parameter
       ! 
@@ -2791,7 +2807,7 @@ subroutine fitting_energies
       !  adjusting the weights  
       ! 
       do nrow=1,npts
-         if (wt(nrow)>0) wt(nrow) = 1.0d0/( sigma(nrow)**2 + eps(nrow)**2 )
+         if (wt(nrow)>0) wt(nrow) = 1.0d0/( sigma(nrow)**2 + a_wats*eps(nrow)**2 )
       enddo 
       ! 
       ! "re-normalizing" the weight factors
