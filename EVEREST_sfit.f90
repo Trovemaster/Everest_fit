@@ -206,9 +206,10 @@ subroutine fitting_energies
 
   real(rk)          :: jrot                    ! current value of the rotational quantum number 
   !
-  character(len=30) :: evib_exe               ! Everest exe-file. 
-  character(len=30) :: erot_exe              ! Everest exe-file. 
-  character(len=30) :: xpect_exe               ! Everest exe-file. 
+  character(len=30) :: evib_exe =   "evvib.e"  ! Everest exe-file. 
+  character(len=30) :: erot_exe =   "evrot.e"  ! Everest exe-file. 
+  character(len=30) :: dervib_exe = "evvder.e" ! Everest exe-file: vibrational derivatives 
+  character(len=30) :: derrot_exe = "evrder.e"          ! Everest exe-file: vibrational derivatives 
 
   integer           :: alloc, ierror      ! error state variables 
   !
@@ -438,10 +439,13 @@ subroutine fitting_energies
         !
         call reada(erot_exe)
         !
+      case('DERVIB','DER_VIB')
         !
-      case('DERIV','XPECT')
+        call reada(dervib_exe)
         !
-        call reada(xpect_exe)
+      case('DERROT','DER_ROT')
+        !
+        call reada(derrot_exe)
         !
       case ("MEM","MEMORY")
         !
@@ -785,6 +789,10 @@ subroutine fitting_energies
              !
              call readu(fitting%fit_type)
              !
+           case('DERIVE_TYPE')
+             !
+             call readu(deriv_type)
+             !
            case('THRESH_ASSIGN','THRESH_REASSIGN','THRESH_LOCK','LOCK','LOCK_QUANTA')
              !
              call readf(fitting%threshold_lock)
@@ -931,6 +939,14 @@ subroutine fitting_energies
                 call readf(fitting%obs(iobs)%quanta%omega)
                 !
                 call readf(fitting%obs(iobs)%weight)
+                !
+                ! make sure the first line is the lowest state
+                !
+                if ( iobs==1.and.( nint(fitting%obs(iobs)%Jrot-0.5)/=0.or.itau/=1.or.fitting%obs(iobs)%N/=1.or.fitting%obs(iobs)%quanta%istate/=1) ) then
+                  write(out,"('Illegal fitting input: 1st line must be the g.s. not J,tau,state,n = ',f8.1,3i,f12.3)") &
+                            fitting%obs(iobs)%Jrot,itau,fitting%obs(iobs)%quanta%istate,fitting%obs(iobs)%N,fitting%obs(iobs)%energy
+                  stop 'Illegal fitting input: 1st line must be the g.s.'
+                endif
                 !
                 call read_line(eof,iut) ; if (eof) exit
                 call readu(w)
@@ -1492,7 +1508,7 @@ subroutine fitting_energies
           ! differencies. It is essentially slower and we use it only for 
           ! the testing of the xpect3 derivativies.
           !
-          if (trim(deriv_type)/='hellman'.and.fitting%itermax.ge.1.and.fitting%factor>1e-12) then
+          if (trim(deriv_type)/='HELLMAN'.and.fitting%itermax.ge.1.and.fitting%factor>1e-12) then
             !
             if (verbose>=3) write(f_out,"('Using finete differences for the derivatives')")
             !
@@ -1500,13 +1516,52 @@ subroutine fitting_energies
             !
           else
             !
-            write(out,"('hellmanm is not imeplemented yet')")
+#if (debug_ == 0)
             !
-            stop 'hellmanm is not imeplemented yet'
+            ! Everst derivatives using Helmann-Feinman method
+            ! 
+            isys = systemqq(dervib_exe//'< vde.inp > vde.out')
+            isys = systemqq(derrot_exe//'< rde.inp > rde.out')
             !
+#endif
+            !
+            !
+            if (verbose>=4) write(f_out,"('   Collecting derivatives...')")
+            !
+            call get_vibronic_derivatives(Nmax,Nstates,calc,rjacob)
             !
             ! Jacobi matrix stores derivatives only for energies that have obs. counterparts 
             ! in input with weight /= 0, i.e. participating in the fit. 
+            !
+            ! 
+            do iobs = 1,fitting%Nenergies
+               !
+               Jrot = fitting%obs(iobs)%Jrot
+               iparity = fitting%obs(iobs)%iparity
+               iref = fitting%obs(iobs)%iref
+               nrot = int(jrot)
+               !
+               ipar_ = 1 ; if (iparity==-1) ipar_ = 2
+               !
+               if (Jrot>jmax) cycle
+               !
+               !N = fitting%obs(iobs)%N
+               !
+               if (fitting%obs(iobs)%N>Nstates(iref,nrot,ipar_)) then
+                 write(out,"('deriv: illegal N in the observed list:, J,par,N = ',f9.1,i3,i7)") Jrot,iparity,fitting%obs(iobs)%N
+                 stop 'deriv: illegal N in the observed list' 
+               endif
+               !
+               !enerright(iobs) = calc_(iref,nrot,ipar_)%energy(N)
+               !
+               do  ncol=1,numpar
+                  !
+                  i = ifitparam(ncol)
+                  !
+                  !   rjacob(nrow,ncol) = Everest(jsym)%derj(iener,i)-derj0(i)
+                  ! 
+               enddo
+            enddo             
             !
             do nrow = 1,fitting%Nenergies
               !
@@ -2383,6 +2438,7 @@ subroutine fitting_energies
     !
     type(fieldT),intent(in)  :: field ! field1.fit
     character(len=10) :: filename
+    character(len=1)  :: fit_str = " "
     !
     integer(ik) :: f_p = 21,i
       !
@@ -2394,8 +2450,12 @@ subroutine fitting_energies
       write(f_p,"('alpha',4x,f19.10)") field%alpha
       !
       do i=1,field%Nterms
-         write(f_p,"(a8,1x,3i4,1x,e24.12)") adjustl((field%forcename(i))),field%ipower1(i),field%ipower2(i),field%ipower3(i),&
-                                          field%value(i)
+         !
+         fit_str = " " ; if (field%weight(i)>0) fit_str = "*"
+         !
+         write(f_p,"(a7,a1,1x,3i4,1x,e24.12)") adjustl((field%forcename(i))),fit_str,&
+                                              field%ipower1(i),field%ipower2(i),field%ipower3(i),&
+                                              field%value(i)
       end do
       !
       write(f_p,*) field%alphamin
@@ -2638,6 +2698,94 @@ subroutine fitting_energies
       !
     end subroutine get_vibronic_energies
     !
+
+    subroutine get_vibronic_derivatives(Nmax,Nstates,calc,rjacob)
+      !
+      integer(ik),intent(in) :: Nmax
+      integer(ik),intent(inout)  :: Nstates(2,0:Nmax,2)
+      real(rk) :: rjacob(:,:)
+      type(calcT),intent(in) :: calc(2,0:Nmax,2)
+      !
+      integer(ik)              :: tunit,tau,Kc,Pot,Kma,ISR,J2,ipar,Nrot,Ntot,Nsize,nn
+      integer(ik)    :: i,iref,v1,v2,v3,ka,iab2,iobs,iparam
+      real(rk)  :: Energy,De,wei,Ome,Wome,Wma,Jrot,Deriv
+      character(len=5)   :: Jch
+      !
+      tunit = 32
+      !
+      if (verbose>=5) write(f_out,"('   Extracting rovibronic energies ...')")
+      !
+      open(tunit,file='evrdet.dat',action='read',status='old')
+      !
+      ! skip first line
+      !
+      read(tunit,*) Jch
+      !
+      !      Jch,Par,j1,        Energy            De     V  Ka Kc    v1 v2 v3     Wei    Ome    Wome Pot Kma    Wma   ISR  N
+      !
+      do 
+        read(tunit,*,end=129) iref,J2,tau,iab2,nn,iparam,Energy,Deriv
+        !
+        Jrot = real(J2,rk)*0.5_rk
+        Nrot = nint(Jrot-0.5_rk)
+        ipar  = 1 ; if (tau == -1) ipar = 2
+        !
+        if (Nrot>Nmax) cycle
+        !
+        ! check just in case if the energy agtrees for the state from calc
+        !
+        if (abs(Energy-calc(iref,Nrot,ipar)%energy(nn))>1e-2) then 
+          write(out,"('get_vibronic_deriv er: internal/external energies dont agree for 2J,tau,ref,nn,E = ',3i,1x,2f9.3)") &
+                    J2,tau,iref,nn,calc(iref,Nrot,ipar)%energy(nn),Energy
+          stop 'get_vibronic_deriv er: internal/external energies dont agree'
+        endif
+        !
+        iobs = 0
+        !
+        ! Find a match in the observed set of states
+        !
+        loop_iobs : do 
+          !
+          iobs = iobs+1
+          if (nn==fitting%obs(iobs)%N.and.nint(Jrot-fitting%obs(iobs)%Jrot)==0 &
+              .and.iref==fitting%obs(iobs)%iref &
+              .and.tau==fitting%obs(iobs)%iparity ) then
+            !
+            exit loop_iobs
+            !
+          endif
+          !
+          if (iobs==fitting%Nenergies) exit loop_iobs 
+          !
+        enddo loop_iobs
+        !
+        if (iobs>=fitting%Nenergies) cycle 
+        !
+        ! storing the derivatives 
+        rjacob(iobs,iparam) = deriv
+        !
+        continue
+        !
+        cycle
+        !         
+      129 continue
+          exit
+     
+      end do
+      !
+      ! subtract the ZPE derivatives
+      !
+      do iobs = 2,fitting%Nenergies
+        rjacob(iobs,:) = rjacob(iobs,:) - rjacob(1,:)
+      enddo
+      rjacob(1,:) = 0 
+      !
+      if (verbose>=5) write(f_out,"('   ... done!')")
+      !
+      close(tunit,status='keep')
+      !
+    end subroutine get_vibronic_derivatives
+
     !
     subroutine update_linked_parameters
       !
