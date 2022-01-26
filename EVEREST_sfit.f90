@@ -793,6 +793,8 @@ subroutine fitting_energies
              !
              call readu(deriv_type)
              !
+             if (trim(deriv_type)=='HELLMAN-FEYNMAN') deriv_type = 'HELLMAN'
+             !
            case('THRESH_ASSIGN','THRESH_REASSIGN','THRESH_LOCK','LOCK','LOCK_QUANTA')
              !
              call readf(fitting%threshold_lock)
@@ -1533,62 +1535,6 @@ subroutine fitting_energies
             ! Jacobi matrix stores derivatives only for energies that have obs. counterparts 
             ! in input with weight /= 0, i.e. participating in the fit. 
             !
-            ! 
-            do iobs = 1,fitting%Nenergies
-               !
-               Jrot = fitting%obs(iobs)%Jrot
-               iparity = fitting%obs(iobs)%iparity
-               iref = fitting%obs(iobs)%iref
-               nrot = int(jrot)
-               !
-               ipar_ = 1 ; if (iparity==-1) ipar_ = 2
-               !
-               if (Jrot>jmax) cycle
-               !
-               !N = fitting%obs(iobs)%N
-               !
-               if (fitting%obs(iobs)%N>Nstates(iref,nrot,ipar_)) then
-                 write(out,"('deriv: illegal N in the observed list:, J,par,N = ',f9.1,i3,i7)") Jrot,iparity,fitting%obs(iobs)%N
-                 stop 'deriv: illegal N in the observed list' 
-               endif
-               !
-               !enerright(iobs) = calc_(iref,nrot,ipar_)%energy(N)
-               !
-               do  ncol=1,numpar
-                  !
-                  i = ifitparam(ncol)
-                  !
-                  !   rjacob(nrow,ncol) = Everest(jsym)%derj(iener,i)-derj0(i)
-                  ! 
-               enddo
-            enddo             
-            !
-            do nrow = 1,fitting%Nenergies
-              !
-              !iJ = J_obs(nrow) ; jsym = sym_obs(nrow) !; ipar = mod(isym,2)
-              !
-              !if (iJ==Jrot.and.(isym==jsym.or.iasym==jsym)) then 
-              !  !
-              !  iener  = n_obs(nrow) ;  if (iener>meval.or.isym>4.or.iasym>4) cycle 
-              !  !
-              !  ! Use only the derivatives for parameters with ivar/=0, i.e. varying paramaters. 
-              !  !
-              !  ncol=0
-              !  do  i=1,total_parameters
-              !    if (ivar(i) .ne. 0) then
-              !       !
-              !       ncol=ncol+1
-              !       !
-              !       rjacob(nrow,ncol) = Everest(jsym)%derj(iener,i)-derj0(i)
-              !       !
-              !     endif
-              !     ! 
-              !  enddo 
-              !  !
-              !endif 
-              !
-            enddo
-            !
           endif 
           !
         endif 
@@ -1615,11 +1561,10 @@ subroutine fitting_energies
           !
           iener = fitting%obs(nrow)%N
           !
-          if (iener>Nstates(iref,Nrot,ipar_)) then 
-             enercalc(nrow) = 0
-          else
-             enercalc(nrow) = calc(iref,Nrot,ipar_)%energy(iener)-ezero_
-          endif
+          if (iener>Nstates(iref,Nrot,ipar_)) cycle 
+          !enercalc(nrow) = 0
+          !
+          enercalc(nrow) = calc(iref,Nrot,ipar_)%energy(iener)-ezero_
           !
           eps(nrow) = fitting%obs(nrow)%energy-enercalc(nrow)
           !
