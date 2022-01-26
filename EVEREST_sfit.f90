@@ -259,7 +259,7 @@ subroutine fitting_energies
   character(len=8),allocatable :: nampar(:)   ! parameter names 
   
   integer,allocatable :: ivar(:)              ! switch for the parameters fit: ivar(i) = 0 for the parameters that do not vary.
-  integer,allocatable ::   ifitparam(:)    ! address of the refiedn parameters
+  integer,allocatable ::   ifitparam(:),iparamfit(:)   ! address of the refiedn parameters
   !
   !integer,allocatable :: J_obs(:),sym_obs(:) ! Arrays where we 
   !                                           ! store the information about obs. energies: 
@@ -1206,6 +1206,8 @@ subroutine fitting_energies
    call ArrayStart('nampar',alloc,size(nampar),kind(nampar))
    allocate (ifitparam(total_parameters),stat=alloc)
    call ArrayStart('ifitparam',alloc,size(ifitparam),kind(ifitparam))
+   allocate (iparamfit(total_parameters),stat=alloc)
+   call ArrayStart('iparamfit',alloc,size(iparamfit),kind(iparamfit))
    !
    allocate (ener_obs(fitting%Nenergies),enercalc(fitting%Nenergies),stat=alloc)
    call ArrayStart('ener_obs',alloc,size(ener_obs),kind(ener_obs))
@@ -1283,10 +1285,12 @@ subroutine fitting_energies
       !
       numpar  = 0
       ifitparam = 1
+      iparamfit = 0
       do i=1,total_parameters
         if (ivar(i) > 0) then 
           numpar=numpar+1
           ifitparam(numpar) = i
+          iparamfit(i) = numpar
         endif
       enddo 
       !
@@ -1535,7 +1539,7 @@ subroutine fitting_energies
             !
             if (verbose>=4) write(f_out,"('   Collecting derivatives...')")
             !
-            call get_vibronic_derivatives(Nmax,Nstates,calc,rjacob)
+            call get_vibronic_derivatives(Nmax,total_parameters,calc,iparamfit,rjacob)
             !
             ! Jacobi matrix stores derivatives only for energies that have obs. counterparts 
             ! in input with weight /= 0, i.e. participating in the fit. 
@@ -2178,7 +2182,7 @@ subroutine fitting_energies
                 iref = fitting%obs(iobs)%iref
                 nrot = int(jrot)
                 !
-                write(out,"(i4,1x,f8.1,1x,i2,1x,5i,1x,f15.4,1x,g18.8)") &
+                write(out,"(i4,1x,f8.1,1x,i2,1x,i5,1x,f15.4,1x,g18.8)") &
                      iobs,Jrot,iparity,iref,ncol,fitting%obs(iobs)%Energy,rjacob(iobs,ncol)
                 !
              enddo
@@ -2675,15 +2679,15 @@ subroutine fitting_energies
     end subroutine get_vibronic_energies
     !
 
-    subroutine get_vibronic_derivatives(Nmax,Nstates,calc,rjacob)
+    subroutine get_vibronic_derivatives(Nmax,Nparams,calc,iparamfit,rjacob)
       !
-      integer(ik),intent(in) :: Nmax
-      integer(ik),intent(inout)  :: Nstates(2,0:Nmax,2)
+      integer(ik),intent(in) :: Nmax,Nparams
+      integer(ik),intent(in)  :: iparamfit(Nparams)
       real(rk) :: rjacob(:,:)
       type(calcT),intent(in) :: calc(2,0:Nmax,2)
       !
       integer(ik)              :: tunit,tau,Kc,Pot,Kma,ISR,J2,ipar,Nrot,Ntot,Nsize,nn
-      integer(ik)    :: i,iref,v1,v2,v3,ka,iab2,iobs,iparam
+      integer(ik)    :: i,iref,v1,v2,v3,ka,iab2,iobs,iparam,iState,iaddress,ifit
       real(rk)  :: Energy,De,wei,Ome,Wome,Wma,Jrot,Deriv
       character(len=5)   :: Jch
       !
@@ -2691,7 +2695,7 @@ subroutine fitting_energies
       !
       if (verbose>=5) write(f_out,"('   Extracting rovibronic energies ...')")
       !
-      open(tunit,file='evrdet.dat',action='read',status='old')
+      open(tunit,file='evrder.dat',action='read',status='old')
       !
       ! skip first line
       !
@@ -2700,7 +2704,7 @@ subroutine fitting_energies
       !      Jch,Par,j1,        Energy            De     V  Ka Kc    v1 v2 v3     Wei    Ome    Wome Pot Kma    Wma   ISR  N
       !
       do 
-        read(tunit,*,end=129) iref,J2,tau,iab2,nn,iparam,Energy,Deriv
+        read(tunit,*,end=129) iref,J2,tau,iab2,nn,iparam,iState,Energy,Deriv
         !
         Jrot = real(J2,rk)*0.5_rk
         Nrot = nint(Jrot-0.5_rk)
@@ -2711,8 +2715,8 @@ subroutine fitting_energies
         ! check just in case if the energy agtrees for the state from calc
         !
         if (abs(Energy-calc(iref,Nrot,ipar)%energy(nn))>1e-2) then 
-          write(out,"('get_vibronic_deriv er: internal/external energies dont agree for 2J,tau,ref,nn,E = ',3i,1x,2f9.3)") &
-                    J2,tau,iref,nn,calc(iref,Nrot,ipar)%energy(nn),Energy
+          write(out,"('get_vibronic_deriv er: internal/external energies dont agree for 2J,tau,state,nn,E = ',4i5,1x,2f9.3)") &
+                    J2,tau,istate,nn,calc(iref,Nrot,ipar)%energy(nn),Energy
           stop 'get_vibronic_deriv er: internal/external energies dont agree'
         endif
         !
@@ -2737,8 +2741,20 @@ subroutine fitting_energies
         !
         if (iobs>=fitting%Nenergies) cycle 
         !
+        ! the address of the potentila parameters in the global register 
+        !
+        iaddress = poten(istate)%iaddress(iparam)
+        ifit = iparamfit(iaddress)
+        !
+        if (ifit==0) then 
+          write(out,"('get_vibronic_deriv er: illegal parameter in everest derivatives for 2J,tau,state,nn,E = ',4i5,1x,2f9.3)") &
+                    J2,tau,istate,nn,calc(iref,Nrot,ipar)%energy(nn),Energy
+          stop 'get_vibronic_deriv er: illegal parameter in everest derivatives'
+          !
+        endif
+        !
         ! storing the derivatives 
-        rjacob(iobs,iparam) = deriv
+        rjacob(iobs,ifit) = deriv
         !
         continue
         !
