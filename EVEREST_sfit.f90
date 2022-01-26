@@ -1337,8 +1337,8 @@ subroutine fitting_energies
            !
            if (verbose>=5.and.fititer>1) then 
                isys = systemqq('cp evib.inp evib.inp'//fititer_ch)
-               isys = systemqq('cp erot.inp  erot.inp'//fititer_ch)
-               isys = systemqq('cp erot.out  erot.out'//fititer_ch)
+               isys = systemqq('cp erot.inp erot.inp'//fititer_ch)
+               isys = systemqq('cp erot.out erot.out'//fititer_ch)
            endif
            !
            isys = systemqq('vib_inp.sh '//kmax_ch)
@@ -1346,13 +1346,13 @@ subroutine fitting_energies
            isys = systemqq('rot_inp.sh '//kmax_ch//' '//jmax_ch)
 #endif
         !
-        if (verbose>=3) write(f_out,"('calling the vibrational evib.x program, kmax = ',f8.1)") kmax
+        if (verbose>=3) write(f_out,"('calling the vibrational ',a,' program, kmax = ',f8.1)") evib_exe,kmax
         !
 #if (debug_ == 0)
           isys = systemqq(evib_exe//'< evib.inp > evib.out')
 #endif
         !
-        if (verbose>=3) write(f_out,"('calling the rovibronic erot.x program, kmax, jmax= ',2f8.1)") kmax,jmax
+        if (verbose>=3) write(f_out,"('calling the rovibronic ',a,' program, kmax, jmax= ',2f8.1)") erot_exe,kmax,jmax
 #if (debug_ == 0)
           isys = systemqq(erot_exe//'<erot.inp >erot.out')
 #endif
@@ -1520,9 +1520,14 @@ subroutine fitting_energies
             !
 #if (debug_ == 0)
             !
-            ! Everst derivatives using Helmann-Feinman method
-            ! 
+            ! Everst derivatives using Helmann-Feynman method
+            !
+            if (verbose>=3) write(f_out,"('  Calling the vib. derivatives ',a,' program ...')") dervib_exe
+            !
             isys = systemqq(dervib_exe//'< vde.inp > vde.out')
+            !
+            if (verbose>=3) write(f_out,"('  Calling the rovvib. derivatives Helmann-Feynman() ',a,' program ...')") derrot_exe
+            !
             isys = systemqq(derrot_exe//'< rde.inp > rde.out')
             !
 #endif
@@ -2147,13 +2152,39 @@ subroutine fitting_energies
           !
           if (verbose>=5) write(f_out,"('      ...done'/)")
           !
-          if (verbose>=5) write(f_out,"('      Mappin parameters...'/)")
+          if (verbose>=5) write(f_out,"('      Mapping parameters...'/)")
           !
           call map_parameters(dir=.false.)
           !
           if (verbose>=5) write(f_out,"('      ...done'/)")
           !
       enddo ! --- ncol
+      !
+      ! printing out derivatives for debugging purposes
+      !
+      if (verbose>=6) then 
+         !
+         write(f_out,"(/'   Derivative of energies wrt to pot. parameters:')")
+         write(f_out,"('iobs,Jrot,iparity,iref,npar,Energy(obs),DE_i/Df_n')")
+         !
+         do  ncol=1,numpar
+             !
+             i = ifitparam(ncol)
+             ! 
+             do iobs = 1,fitting%Nenergies
+                !
+                Jrot = fitting%obs(iobs)%Jrot
+                iparity = fitting%obs(iobs)%iparity
+                iref = fitting%obs(iobs)%iref
+                nrot = int(jrot)
+                !
+                write(out,"(i4,1x,f8.1,1x,i2,1x,5i,1x,f15.4,1x,g18.8)") &
+                     iobs,Jrot,iparity,iref,ncol,fitting%obs(iobs)%Energy,rjacob(iobs,ncol)
+                !
+             enddo
+         enddo
+         !
+      endif 
       !
       deallocate (enerright,enerleft)
       !
