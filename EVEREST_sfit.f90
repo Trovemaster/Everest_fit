@@ -233,7 +233,7 @@ subroutine fitting_energies
   type(fieldT),pointer      :: field
   !
   integer(ik)       :: iut !  iut is a unit number. 
-  integer(ik)  :: iobs,itau,iai,ic,iparams,irange,iparity,ipar,irot,Nsize,iaddress,iterm,k0
+  integer(ik)  :: iobs,itau,iai,ic,iparams,irange,iparity,ipar,irot,Nsize,iaddress,iterm,k0,MXRoot
   integer(ik)  :: itau_,iter_th,iener_,jobs
   logical :: matchfound
   character(len=wl) :: large_fmt
@@ -879,6 +879,7 @@ subroutine fitting_energies
              end if
              !
              iobs = 0
+             MXRoot = 1
              !
              call read_line(eof,iut) ; if (eof) exit
              call readu(w)
@@ -941,6 +942,8 @@ subroutine fitting_energies
                 call readf(fitting%obs(iobs)%quanta%omega)
                 !
                 call readf(fitting%obs(iobs)%weight)
+                !
+                MXRoot = max(MXRoot,fitting%obs(iobs)%N)
                 !
                 ! make sure the first line is the lowest state
                 !
@@ -1338,6 +1341,17 @@ subroutine fitting_energies
         ! generate the vib-input and rot-input files using the tempates provided
         !
 #if (debug_ == 0)
+         !
+         if (verbose>=4) then 
+             write(f_out,"('Make sure that the folliwng files are present in the folder:')")
+             write(f_out,"('  - vib_inp.sh')")
+             write(f_out,"('  - rot_inp.sh')")
+             write(f_out,"('  - ',a)") trim(evib_exe)
+             write(f_out,"('  - ',a)") trim(erot_exe)
+             write(f_out,"('  - ',a)") trim(dervib_exe)
+             write(f_out,"('  - ',a)") trim(derrot_exe)
+             write(f_out,"(a,a,' and ',a)") '  - user defined potential function executables in ',trim(evib_exe),trim(erot_exe)
+           endif
            !
            if (verbose>=5.and.fititer>1) then 
                isys = systemqq('cp evib.inp evib.inp'//fititer_ch)
@@ -1348,15 +1362,16 @@ subroutine fitting_energies
            isys = systemqq('vib_inp.sh '//kmax_ch)
            !
            isys = systemqq('rot_inp.sh '//kmax_ch//' '//jmax_ch)
+           !
 #endif
         !
-        if (verbose>=3) write(f_out,"('calling the vibrational ',a,' program, kmax = ',f8.1)") evib_exe,kmax
+        if (verbose>=3) write(f_out,"('calling vibrational ',a,' program, kmax = ',f8.1)") trim(evib_exe),kmax
         !
 #if (debug_ == 0)
           isys = systemqq(evib_exe//'< evib.inp > evib.out')
 #endif
         !
-        if (verbose>=3) write(f_out,"('calling the rovibronic ',a,' program, kmax, jmax= ',2f8.1)") erot_exe,kmax,jmax
+        if (verbose>=3) write(f_out,"('calling  rovibronic ',a,' program, kmax, jmax= ',2f8.1)") trim(erot_exe),kmax,jmax
 #if (debug_ == 0)
           isys = systemqq(erot_exe//'<erot.inp >erot.out')
 #endif
@@ -1419,7 +1434,7 @@ subroutine fitting_energies
         !
         ezero_ = calc(1,0,1)%energy(1)
         !
-        if (verbose>=3) write(f_out,"('ZPE = ',f15.6)") ezero_
+        if (verbose>=3) write(f_out,"('   ZPE = ',f15.6)") ezero_
         !
         ! if threshold_lock>0, correct the addresses of the energies in case of accidential swaps
         ! by comparing with energies within the "threshold_lock"-range and with "exp" quantum numbers.
@@ -1472,6 +1487,10 @@ subroutine fitting_energies
                       write(out,"('               J= ',f9.2,' and state  ',i8)") jrot,iener_
                       stop 'error: the size of calc energy is too small'
                     endif
+                    !
+                    ! Count MaxRoots for the Hellman-Feynman derivatives in Everest 
+                    !
+                    MXRoot = max(MXRoot,iener_)
                     !
                     if ( abs( fitting%obs(iobs)%energy-( calc(iref,irot,itau)%energy(iener_)-ezero_ ) )<= &
                              real(iter_th,rk)*abs(fitting%threshold_lock).and.&
@@ -1526,16 +1545,23 @@ subroutine fitting_energies
             !
             ! Everst derivatives using Helmann-Feynman method
             !
-            if (verbose>=3) write(f_out,"('  Calling the vib. derivatives ',a,' program ...')") dervib_exe
+            if (verbose>=3) write(f_out,"('  Calling the vib. derivs ',a,' program ...')") trim(dervib_exe)
             !
             isys = systemqq(dervib_exe//'< vde.inp > vde.out')
             !
-            if (verbose>=3) write(f_out,"('  Calling the rovvib. derivatives Helmann-Feynman() ',a,' program ...')") derrot_exe
+            if (verbose>=3) write(f_out,"('  Calling the rovib. derivs Helmann-Feynman() ',a,' program ...')") trim(derrot_exe)
             !
             isys = systemqq(derrot_exe//'< rde.inp > rde.out')
             !
 #endif
             !
+            ! Create the input files for the Hellman-Feyman derivatives
+            !
+            if (trim(deriv_type)=='HELLMAN') then 
+              !
+              call create_the_deriv_job_file(MXRoot)
+              !
+            endif
             !
             if (verbose>=4) write(f_out,"('   Collecting derivatives...')")
             !
@@ -2169,7 +2195,7 @@ subroutine fitting_energies
       if (verbose>=6) then 
          !
          write(f_out,"(/'   Derivative of energies wrt to pot. parameters:')")
-         write(f_out,"('iobs,Jrot,iparity,iref,npar,Energy(obs),DE_i/Df_n')")
+         write(f_out,"('    iobs,Jrot,iparity,iref,istate,npar,Energy(obs),DE_i/Df_n')")
          !
          do  ncol=1,numpar
              !
@@ -2182,8 +2208,9 @@ subroutine fitting_energies
                 iref = fitting%obs(iobs)%iref
                 nrot = int(jrot)
                 !
-                write(out,"(i4,1x,f8.1,1x,i2,1x,i5,1x,f15.4,1x,g18.8)") &
-                     iobs,Jrot,iparity,iref,ncol,fitting%obs(iobs)%Energy,rjacob(iobs,ncol)
+                write(out,"(i4,1x,f8.1,4(1x,i2),i5,1x,f15.4,1x,g18.8)") &
+                     iobs,Jrot,iparity,iref,istate,fitting%obs(iobs)%quanta%istate,&
+                     ncol,fitting%obs(iobs)%Energy,rjacob(iobs,ncol)
                 !
              enddo
          enddo
@@ -2687,7 +2714,7 @@ subroutine fitting_energies
       type(calcT),intent(in) :: calc(2,0:Nmax,2)
       !
       integer(ik)              :: tunit,tau,Kc,Pot,Kma,ISR,J2,ipar,Nrot,Ntot,Nsize,nn
-      integer(ik)    :: i,iref,v1,v2,v3,ka,iab2,iobs,iparam,iState,iaddress,ifit
+      integer(ik)    :: i,iref,v1,v2,v3,ka,iab2,iobs,iparam,iState,iaddress,ifit,ifit_,iparam_
       real(rk)  :: Energy,De,wei,Ome,Wome,Wma,Jrot,Deriv
       character(len=5)   :: Jch
       !
@@ -2704,7 +2731,7 @@ subroutine fitting_energies
       !      Jch,Par,j1,        Energy            De     V  Ka Kc    v1 v2 v3     Wei    Ome    Wome Pot Kma    Wma   ISR  N
       !
       do 
-        read(tunit,*,end=129) iref,J2,tau,iab2,nn,iparam,iState,Energy,Deriv
+        read(tunit,*,end=129) iref,J2,tau,iab2,nn,iState,iparam,Energy,Deriv
         !
         Jrot = real(J2,rk)*0.5_rk
         Nrot = nint(Jrot-0.5_rk)
@@ -2715,7 +2742,7 @@ subroutine fitting_energies
         ! check just in case if the energy agtrees for the state from calc
         !
         if (abs(Energy-calc(iref,Nrot,ipar)%energy(nn))>1e-2) then 
-          write(out,"('get_vibronic_deriv er: internal/external energies dont agree for 2J,tau,state,nn,E = ',4i5,1x,2f9.3)") &
+          write(out,"('get_vibronic_deriv er: internal/external energies dont agree for 2J,tau,state,nn,E = ',4i5,2(1x,f12.3))") &
                     J2,tau,istate,nn,calc(iref,Nrot,ipar)%energy(nn),Energy
           stop 'get_vibronic_deriv er: internal/external energies dont agree'
         endif
@@ -2743,12 +2770,25 @@ subroutine fitting_energies
         !
         ! the address of the potentila parameters in the global register 
         !
-        iaddress = poten(istate)%iaddress(iparam)
-        ifit = iparamfit(iaddress)
+        ifit_ = 0 
+        do iparam_ = 1,poten(istate)%Nterms
+          !
+          if (poten(istate)%weight(iparam_)>0) then 
+             ifit_ = ifit_ + 1 
+          endif
+          !
+          if (iparam==ifit_) then 
+            !
+            iaddress = poten(istate)%iaddress(iparam_)
+            ifit = iparamfit(iaddress)
+            exit 
+            !
+          endif
+        enddo
         !
         if (ifit==0) then 
-          write(out,"('get_vibronic_deriv er: illegal parameter in everest derivatives for 2J,tau,state,nn,E = ',4i5,1x,2f9.3)") &
-                    J2,tau,istate,nn,calc(iref,Nrot,ipar)%energy(nn),Energy
+          write(out,"('get_vibronic_deriv er: illegal parameter in everest derivatives for 2J,tau,state,nn,E = ',4i5,1x,f12.3)") &
+                    J2,tau,istate,nn,calc(iref,Nrot,ipar)%energy(nn)
           stop 'get_vibronic_deriv er: illegal parameter in everest derivatives'
           !
         endif
@@ -2839,40 +2879,42 @@ subroutine fitting_energies
 
 
     !
-    subroutine create_the_xpect_job_file(nparams,ivar)
+    subroutine create_the_deriv_job_file(MXRoot)
 	  !
-      integer,intent(in)  :: nparams,ivar(nparams)
-      integer             :: lpot,npropin,nprt,nv1,i
+      integer,intent(in)  :: MXRoot
+      integer :: Mem = 1000,iprint = 1, tunit
       !
-      open(1,file='xpect.inp')
+      tunit = 42
       !
-      write(1,"('&PRT zform=.true., /')")
-      write(1,"('Expectation values, fort.11,properties=3')")
-      !nvib = neval_
+      open(tunit,file='vde.inp',action='write')
       !
-      lpot = nalf_ ! 38
-      npropin = nparams
-      nprt = 0
-      nv1 = 0
+      write(tunit,"('&EVEREST')")
+      write(tunit,"('Memo')")
+      write(tunit,"('Memo')")
+      write(tunit,"(i8)") Mem 
+      write(tunit,"('Print')") 
+      write(tunit,"(i8)") iprint
+      write(tunit,"('End')") 
       !
-      write(1,"(4i5)") lpot,npropin,nprt,nv1
-      do i = 1,npropin 
-        !
-        if (ivar(i)>0) then
-          !
-          write(1,"(i5)") 1
-          !
-        else
-          !
-          write(1,"(i5)") 0
-          !    
-        endif
-        !
-      enddo
+      close(tunit,status='keep')
       !
-      close(1,status='keep')
+      tunit = 42
       !
-    end subroutine create_the_xpect_job_file
+      open(tunit,file='rde.inp',action='write')
+      !
+      write(tunit,"('&EVEREST')")
+      write(tunit,"('Memo')")
+      write(tunit,"('Memo')")
+      write(tunit,"(i8)") Mem 
+      write(tunit,"('MXRoot')")
+      write(tunit,"(i8)") MXRoot 
+      write(tunit,"('Prin')") 
+      write(tunit,"(i8)") iprint
+      write(tunit,"('End')") 
+      !
+      close(tunit,status='keep')
+      !
+    end subroutine create_the_deriv_job_file
     !
     !
     subroutine read_jacobi_matrix(enermax,parmax,derj)
