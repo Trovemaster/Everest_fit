@@ -2208,8 +2208,8 @@ subroutine fitting_energies
                 iref = fitting%obs(iobs)%iref
                 nrot = int(jrot)
                 !
-                write(out,"(i4,1x,f8.1,4(1x,i2),i5,1x,f15.4,1x,g18.8)") &
-                     iobs,Jrot,iparity,iref,istate,fitting%obs(iobs)%quanta%istate,&
+                write(out,"(i4,1x,f8.1,3(1x,i2),i5,1x,f15.4,1x,g18.8)") &
+                     iobs,Jrot,iparity,iref,fitting%obs(iobs)%quanta%istate,&
                      ncol,fitting%obs(iobs)%Energy,rjacob(iobs,ncol)
                 !
              enddo
@@ -2717,6 +2717,7 @@ subroutine fitting_energies
       integer(ik)    :: i,iref,v1,v2,v3,ka,iab2,iobs,iparam,iState,iaddress,ifit,ifit_,iparam_
       real(rk)  :: Energy,De,wei,Ome,Wome,Wma,Jrot,Deriv
       character(len=5)   :: Jch
+      type(linkT),pointer :: flink
       !
       tunit = 32
       !
@@ -2772,6 +2773,10 @@ subroutine fitting_energies
         !
         ifit_ = 0 
         do iparam_ = 1,poten(istate)%Nterms
+          !
+          !flink => poten(ifield)%link(iterm)
+          !
+          !poten(ifield)%value(iterm) = poten(flink%ifield)%value(flink%iparam)
           !
           if (poten(istate)%weight(iparam_)>0) then 
              ifit_ = ifit_ + 1 
@@ -2888,11 +2893,10 @@ subroutine fitting_energies
       !
       open(tunit,file='vde.inp',action='write')
       !
-      write(tunit,"('&EVEREST')")
-      write(tunit,"('Memo')")
+      write(tunit,"(' &EVEREST')")
       write(tunit,"('Memo')")
       write(tunit,"(i8)") Mem 
-      write(tunit,"('Print')") 
+      write(tunit,"('print')") 
       write(tunit,"(i8)") iprint
       write(tunit,"('End')") 
       !
@@ -2902,13 +2906,12 @@ subroutine fitting_energies
       !
       open(tunit,file='rde.inp',action='write')
       !
-      write(tunit,"('&EVEREST')")
-      write(tunit,"('Memo')")
+      write(tunit,"(' &EVEREST')")
       write(tunit,"('Memo')")
       write(tunit,"(i8)") Mem 
       write(tunit,"('MXRoot')")
       write(tunit,"(i8)") MXRoot 
-      write(tunit,"('Prin')") 
+      write(tunit,"('print')") 
       write(tunit,"(i8)") iprint
       write(tunit,"('End')") 
       !
