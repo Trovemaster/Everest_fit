@@ -1,6 +1,6 @@
 module fit_module
 !
-#define debug_  1
+#define debug_  0
 !
 use input
 use timer
@@ -29,7 +29,7 @@ integer,parameter          ::  findif = 3    ! Dinite difference differentiation
 !
 real(rk),parameter :: fitfactordeltax=0.001   ! parameter for the finite differncies differention 
 !
-character(len=70) :: deriv_type = 'finite  '  ! hellman or direct - how we calculate derivatives. 
+character(len=70) :: deriv_type = 'finite  '  ! hellmann or direct - how we calculate derivatives. 
                                              ! direct means the finite diferentiation of energies wrt parameters.
 !
 integer,parameter :: nofititer=6             ! the Jacobi matrix can be evaluated only each nofititer+1 step. For all 
@@ -798,7 +798,10 @@ subroutine fitting_energies
              !
              call readu(deriv_type)
              !
-             if (trim(deriv_type)=='HELLMAN-FEYNMAN') deriv_type = 'HELLMAN'
+             select case (deriv_type)
+             case ('HELLMANN-FEYNMAN','HELLMAN')
+              deriv_type = 'HELLMANN'
+             end select
              !
            case('THRESH_ASSIGN','THRESH_REASSIGN','THRESH_LOCK','LOCK','LOCK_QUANTA')
              !
@@ -1491,7 +1494,7 @@ subroutine fitting_energies
                       stop 'error: the size of calc energy is too small'
                     endif
                     !
-                    ! Count MaxRoots for the Hellman-Feynman derivatives in Everest 
+                    ! Count MaxRoots for the Hellmann-Feynman derivatives in Everest 
                     !
                     MXRoot = max(MXRoot,iener_)
                     !
@@ -1536,7 +1539,7 @@ subroutine fitting_energies
           ! differencies. It is essentially slower and we use it only for 
           ! the testing of the xpect3 derivativies.
           !
-          if (trim(deriv_type)/='HELLMAN'.and.fitting%itermax.ge.1.and.fitting%factor>1e-12) then
+          if (trim(deriv_type)/='HELLMANN'.and.fitting%itermax.ge.1.and.fitting%factor>1e-12) then
             !
             if (verbose>=3) write(f_out,"('Using finete differences for the derivatives')")
             !
@@ -1558,9 +1561,9 @@ subroutine fitting_energies
             !
 #endif
             !
-            ! Create the input files for the Hellman-Feyman derivatives
+            ! Create the input files for the Hellmann-Feyman derivatives
             !
-            if (trim(deriv_type)=='HELLMAN') then 
+            if (trim(deriv_type)=='HELLMANN') then 
               !
               call create_the_deriv_job_file(MXRoot,iOMP)
               !
