@@ -101,7 +101,7 @@ integer,parameter   :: max_input_lines=500000  ! maximum length (in lines) of in
     integer(ik),pointer     :: ipower3(:)=>null()    ! power
     character(len=cl),pointer :: forcename(:)=>null() ! The parameter name
     integer(ik),pointer     :: iaddress(:)=>null()    ! iaddress in the potparam object 
-    type(linkT),pointer          ::  link(:)=>null() ! linking to a value of a different field
+    type(linkT),pointer     ::  link(:)=>null() ! linking to a value of a different field
     !
   end type fieldT
   !
@@ -229,6 +229,7 @@ subroutine fitting_energies
   logical :: eof
   !
   integer(ik) :: i,nJ,ipot,iso,iref,istate,jref,Nparam,Nparam_check,iparam,ifield,ifield_,iaddr,Total_size=0
+  integer(ik) :: iOMP = 1
   !
   type(fieldT),pointer      :: field
   !
@@ -446,6 +447,10 @@ subroutine fitting_energies
       case('DERROT','DER_ROT')
         !
         call reada(derrot_exe)
+        !
+      case('OMP')
+        !
+        call readi(iOMP)
         !
       case ("MEM","MEMORY")
         !
@@ -1326,10 +1331,8 @@ subroutine fitting_energies
         ! create files with potential parameters 
         !
         call map_parameters(dir=.false.)
-        call write_potential_input_parameters(poten(1),'field1.fit')
-        call write_potential_input_parameters(poten(2),'field2.fit')
-        call write_potential_input_parameters(poten(3),'field3.fit')
-        call write_potential_input_parameters(poten(4),'field4.fit')
+        !
+        call write_input_potential_parameters(Nfields,poten)
         !
         if (verbose>=3) write(f_out,"(/'calling evvib Everest program')")
         !
@@ -1545,11 +1548,11 @@ subroutine fitting_energies
             !
             ! Everst derivatives using Helmann-Feynman method
             !
-            if (verbose>=3) write(f_out,"('  Calling the vib. derivs ',a,' program ...')") trim(dervib_exe)
+            if (verbose>=3) write(f_out,"('   Calling the vib. derivs ',a,' program ...')") trim(dervib_exe)
             !
             isys = systemqq(dervib_exe//'< vde.inp > vde.out')
             !
-            if (verbose>=3) write(f_out,"('  Calling the rovib. derivs Helmann-Feynman() ',a,' program ...')") trim(derrot_exe)
+            if (verbose>=3) write(f_out,"('   Calling the rovib. derivs Helmann-Feynman ',a,' program ...')") trim(derrot_exe)
             !
             isys = systemqq(derrot_exe//'< rde.inp > rde.out')
             !
@@ -1559,7 +1562,7 @@ subroutine fitting_energies
             !
             if (trim(deriv_type)=='HELLMAN') then 
               !
-              call create_the_deriv_job_file(MXRoot)
+              call create_the_deriv_job_file(MXRoot,iOMP)
               !
             endif
             !
@@ -1891,10 +1894,7 @@ subroutine fitting_energies
            ! we store the current values 
            !
            call map_parameters(dir=.false.)
-           call write_potential_input_parameters(poten(1),'field1.fit')
-           call write_potential_input_parameters(poten(2),'field2.fit')
-           call write_potential_input_parameters(poten(3),'field3.fit')
-           call write_potential_input_parameters(poten(4),'field4.fit')
+           call write_input_potential_parameters(Nfields,poten)
            !
            ! Estimate standard deviation error. 
            !
@@ -2411,10 +2411,8 @@ subroutine fitting_energies
       call map_parameters(dir=.false.)
       !
       if (verbose>=5) write(f_out,"('   Prepating input files with pot. parameters...')")
-      call write_potential_input_parameters(poten(1),'field1.fit')
-      call write_potential_input_parameters(poten(2),'field2.fit')
-      call write_potential_input_parameters(poten(3),'field3.fit')
-      call write_potential_input_parameters(poten(4),'field4.fit')
+      !
+      call write_input_potential_parameters(Nfields,poten)
       !
       if (verbose>=3) write(f_out,"(/'   Calling Everest program with kmax =  ',i5,'...')") nint(kmax+0.5)
       !
@@ -2438,43 +2436,70 @@ subroutine fitting_energies
    end subroutine run_everest
    !
 
-  end subroutine fitting_energies
-  !
-
-  subroutine write_potential_input_parameters(field,filename)
+    subroutine write_input_potential_parameters(Nfields,poten)
     !
-    type(fieldT),intent(in)  :: field ! field1.fit
+    integer(ik),intent(in) :: Nfields
+    type(fieldT),target,intent(in)  :: poten(Nfields) ! field1.fit
     character(len=10) :: filename
     character(len=1)  :: fit_str = " "
-    !
-    integer(ik) :: f_p = 21,i
+    type(fieldT),pointer      :: field
+    integer(ik) :: f_p = 21,ifield,i
+    type(linkT),pointer :: flink
       !
-      open(f_p,file=trim(filename),status='replace')
+      do ifield = 1,Nfields
+        !
+        field => poten(ifield)
+        !
+        if (ifield<10) then 
+           write(filename,"('field',i1,'.fit')") ifield
+        else
+           write(filename,"('field',i2,'.fit')") ifield
+        endif
+        !
+        open(f_p,file=trim(filename),status='replace')
+        !
+        write(f_p,*) field%Nterms
+        write(f_p,"('r1',4x,f19.10)") field%r1
+        write(f_p,"('r2',4x,f19.10)") field%r2
+        write(f_p,"('alpha',4x,f19.10)") field%alpha
+        !
+        do i=1,field%Nterms
+           !
+           fit_str = " " ; if (field%weight(i)>0) fit_str = "*"
+           !
+           ! check if the paramter is linked to a varied paramter; it needs to be marked as varied in EVEREST  with *
+           !
+           flink => poten(ifield)%link(i)
+           !
+           if (flink%ifield/=0) then
+             !
+             if (poten(flink%ifield)%weight(flink%iparam)>0) fit_str = "*"
+             !
+           endif
+           !
+           ! write the record into the input file
+           !
+           write(f_p,"(a7,a1,1x,3i4,1x,e24.12)") adjustl((field%forcename(i))),fit_str,&
+                                                field%ipower1(i),field%ipower2(i),field%ipower3(i),&
+                                                field%value(i)
+        end do
+        !
+        write(f_p,*) field%alphamin
+        write(f_p,*) field%range(1,1),field%range(2,1),field%range(3,1)
+        write(f_p,*) field%range(1,2),field%range(2,2),field%range(3,2)
+        write(f_p,*) field%range(1,3),field%range(2,3),field%range(3,3)
+        !
+        close(f_p)
+        !
+      enddo
       !
-      write(f_p,*) field%Nterms
-      write(f_p,"('r1',4x,f19.10)") field%r1
-      write(f_p,"('r2',4x,f19.10)") field%r2
-      write(f_p,"('alpha',4x,f19.10)") field%alpha
-      !
-      do i=1,field%Nterms
-         !
-         fit_str = " " ; if (field%weight(i)>0) fit_str = "*"
-         !
-         write(f_p,"(a7,a1,1x,3i4,1x,e24.12)") adjustl((field%forcename(i))),fit_str,&
-                                              field%ipower1(i),field%ipower2(i),field%ipower3(i),&
-                                              field%value(i)
-      end do
-      !
-      write(f_p,*) field%alphamin
-      write(f_p,*) field%range(1,1),field%range(2,1),field%range(3,1)
-      write(f_p,*) field%range(1,2),field%range(2,2),field%range(3,2)
-      write(f_p,*) field%range(1,3),field%range(2,3),field%range(3,3)
-      !
-      close(f_p)
-      !
-    end subroutine write_potential_input_parameters
-  
+    end subroutine write_input_potential_parameters
 
+
+   !
+  end subroutine fitting_energies
+  !
+  !
   !
   subroutine linur(dimen,npar,coeff,constant,solution,error)
 
@@ -2713,7 +2738,7 @@ subroutine fitting_energies
       real(rk) :: rjacob(:,:)
       type(calcT),intent(in) :: calc(2,0:Nmax,2)
       !
-      integer(ik)              :: tunit,tau,Kc,Pot,Kma,ISR,J2,ipar,Nrot,Ntot,Nsize,nn
+      integer(ik)              :: tunit,tau,Kc,Pot,Kma,ISR,J2,ipar,Nrot,Ntot,Nsize,nn,n1,n2,n3
       integer(ik)    :: i,iref,v1,v2,v3,ka,iab2,iobs,iparam,iState,iaddress,ifit,ifit_,iparam_
       real(rk)  :: Energy,De,wei,Ome,Wome,Wma,Jrot,Deriv
       character(len=5)   :: Jch
@@ -2729,10 +2754,12 @@ subroutine fitting_energies
       !
       read(tunit,*) Jch
       !
-      !      Jch,Par,j1,        Energy            De     V  Ka Kc    v1 v2 v3     Wei    Ome    Wome Pot Kma    Wma   ISR  N
+      ! set all derivatives to zero
+      !
+      rjacob = 0 
       !
       do 
-        read(tunit,*,end=129) iref,J2,tau,iab2,nn,iState,iparam,Energy,Deriv
+        read(tunit,*,end=129) iref,J2,tau,iab2,nn,iState,iparam_,iparam,n2,n3,Energy,Deriv
         !
         Jrot = real(J2,rk)*0.5_rk
         Nrot = nint(Jrot-0.5_rk)
@@ -2769,37 +2796,33 @@ subroutine fitting_energies
         !
         if (iobs>=fitting%Nenergies) cycle 
         !
-        ! the address of the potentila parameters in the global register 
+        ! check if the parameter is linked to a different object 
         !
-        ifit_ = 0 
-        do iparam_ = 1,poten(istate)%Nterms
-          !
-          !flink => poten(ifield)%link(iterm)
-          !
-          !poten(ifield)%value(iterm) = poten(flink%ifield)%value(flink%iparam)
-          !
-          if (poten(istate)%weight(iparam_)>0) then 
-             ifit_ = ifit_ + 1 
-          endif
-          !
-          if (iparam==ifit_) then 
-            !
-            iaddress = poten(istate)%iaddress(iparam_)
-            ifit = iparamfit(iaddress)
-            exit 
-            !
-          endif
-        enddo
+        flink => poten(istate)%link(iparam)
+        !
+        ! obtain the address of the potentila parameters in the global register 
+        !
+        if (flink%ifield==0) then 
+           !
+           iaddress = poten(istate)%iaddress(iparam)
+           ifit = iparamfit(iaddress)
+        else
+           iaddress = poten(flink%ifield)%iaddress(flink%iparam)
+           ifit = iparamfit(iaddress)
+        endif
         !
         if (ifit==0) then 
-          write(out,"('get_vibronic_deriv er: illegal parameter in everest derivatives for 2J,tau,state,nn,E = ',4i5,1x,f12.3)") &
-                    J2,tau,istate,nn,calc(iref,Nrot,ipar)%energy(nn)
-          stop 'get_vibronic_deriv er: illegal parameter in everest derivatives'
+          write(out,"(/'Error in get_vibronic_deriv: illegal parameter in EV derivs, 2J,tau,state,nn,E,ipar = ',4i5,1x,f12.3)") &
+                    J2,tau,istate,nn,calc(iref,Nrot,ipar)%energy(nn),iparam
+          stop 'Error in get_vibronic_deriv: illegal parameter in EVEREST derivatives'
           !
         endif
         !
-        ! storing the derivatives 
-        rjacob(iobs,ifit) = deriv
+        ! Storing the derivatives by adding to the previosuly defined values in case of the linked parameters:
+        ! which are defined as d E / d C =  d E / d C1 + d E / d C2 
+        ! for the constraint C1=C2=C
+        !
+        rjacob(iobs,ifit) = rjacob(iobs,ifit) + deriv
         !
         continue
         !
@@ -2884,27 +2907,29 @@ subroutine fitting_energies
 
 
     !
-    subroutine create_the_deriv_job_file(MXRoot)
+    subroutine create_the_deriv_job_file(MXRoot,iOMP)
 	  !
-      integer,intent(in)  :: MXRoot
+      integer,intent(in)  :: MXRoot,iOMP
       integer :: Mem = 1000,iprint = 1, tunit
       !
       tunit = 42
       !
-      open(tunit,file='vde.inp',action='write')
+      open(tunit,file='vde.inp',action='write',status='replace')
       !
       write(tunit,"(' &EVEREST')")
       write(tunit,"('Memo')")
       write(tunit,"(i8)") Mem 
       write(tunit,"('print')") 
       write(tunit,"(i8)") iprint
+      write(tunit,"('OMP')") 
+      write(tunit,"(i4)") iOMP
       write(tunit,"('End')") 
       !
       close(tunit,status='keep')
       !
       tunit = 42
       !
-      open(tunit,file='rde.inp',action='write')
+      open(tunit,file='rde.inp',action='write',status='replace')
       !
       write(tunit,"(' &EVEREST')")
       write(tunit,"('Memo')")
