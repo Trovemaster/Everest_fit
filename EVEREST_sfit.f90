@@ -1,6 +1,6 @@
 module fit_module
 !
-#define debug_  0
+#define debug_  1
 !
 use input
 use timer
@@ -2930,7 +2930,7 @@ subroutine fitting_energies
       !
       close(tunit,status='keep')
       !
-      tunit = 42
+      tunit = 43
       !
       open(tunit,file='rde.inp',action='write',status='replace')
       !

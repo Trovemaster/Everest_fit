@@ -7,9 +7,9 @@ public :: caoh_init_pot,caoh_pot,caoh_potmin,poten_xyz
 
 private
 real(ark) :: deg, aucm, ang
-integer ieq, parmax, i1(40), i2(40), i3(40)
+integer ieq, parmax, i1(100), i2(100), i3(100)
 double precision  par(3), par3min
-double precision  force(40)
+double precision  force(100)
 character(9) buf30
 
 contains
